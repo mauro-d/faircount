@@ -2,9 +2,9 @@ import { Writable } from 'node:stream'
 
 /** Parameters shared by the core, the stream, and `estimateDistinct`. */
 export interface CVMOptions {
-  /** Relative error target, in `(0, 1)`. Default `0.05`. */
+  /** How close the estimate should be, as a fraction (`0.05` = ±5%). Default `0.05`. */
   epsilon?: number
-  /** Failure probability, in `(0, 1)`. Default `0.01`. */
+  /** How often a run may land outside ±`epsilon` (`0.01` = at most 1%). Default `0.01`. */
   delta?: number
   /**
    * Expected/upper-bound stream length `m` (logarithmic effect). Optional, but
@@ -54,13 +54,13 @@ export class CVM {
   readonly delta: number
   readonly expectedSize: number
   readonly threshold: number
-  /** Process one element. @throws {CVMFailureError} on the rare ⊥ outcome. */
+  /** Process one element. */
   add(element: unknown): this
-  /** Process many elements. @throws {CVMFailureError} */
+  /** Process many elements. */
   addAll(elements: Iterable<unknown>): this
-  /** Current estimate of the distinct count (`|X| / p`). */
+  /** The estimated number of distinct values. */
   get distinct(): number
-  /** Current number of retained samples (`|X|`). */
+  /** How many elements are held. */
   get sampleCount(): number
   result(): CVMResult
   /** Clear samples and restart from `p = 1`, keeping parameters and RNG. */
@@ -75,9 +75,9 @@ export class CVM {
 export class DistinctEstimateStream extends Writable {
   constructor(options?: DistinctEstimateStreamOptions)
   result(): CVMResult
-  /** Current estimate of the distinct count. */
+  /** The estimated number of distinct values. */
   get distinct(): number
-  /** Sample-set capacity (`threshold`). */
+  /** The maximum it can hold. */
   get threshold(): number
 }
 

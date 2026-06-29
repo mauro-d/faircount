@@ -18,7 +18,7 @@ export function computeThreshold (epsilon, delta, expectedSize) {
 // Core engine: the total, unbiased CVM variant (Karayel et al., ITP 2025,
 // Algorithm 3; on the CVM algorithm, arXiv:2301.10191). Sub-sampling keeps a
 // uniformly random half of the buffer instead of an independent ½-coin per
-// element, which makes it total (never fails) and unbiased (E[estimate] = |A|).
+// element, which makes it total (never fails) and unbiased (E[estimate] = F0).
 // Feed values with add(), read result(); values must be Set-comparable.
 export class CVM {
   constructor (options = {}) {

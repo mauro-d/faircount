@@ -71,8 +71,9 @@ test('estimate stays within ε of F0 with probability ≥ 1−δ (statistical)',
   for (let t = 0; t < trials; t++) {
     const cvm = new CVM({ epsilon, delta, expectedSize: data.length, seed: t + 1 })
     cvm.addAll(data)
-    relSum += Math.abs(cvm.distinct - f0) / f0
-    if (Math.abs(cvm.distinct - f0) / f0 <= epsilon) within++
+    const rel = Math.abs(cvm.distinct - f0) / f0
+    relSum += rel
+    if (rel <= epsilon) within++
     assert.ok(cvm.result().p < 1, 'sub-sampling should have engaged')
   }
   assert.ok(within / trials >= 0.9, `only ${within}/${trials} within ε`)
