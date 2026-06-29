@@ -1,18 +1,18 @@
 # cvm-estimator
 
 Count the distinct values in a stream using only a small, fixed amount of memory.
-The result is an estimate, and you control how accurate it is.
-
-Counting them exactly means remembering every value you see, so memory grows with
-the number of distinct values. This library keeps a bounded random sample instead
-and extrapolates from it: memory stays flat whether the stream holds a thousand
-distinct values or a billion. You choose how close the estimate should be
-(`epsilon`) and how often it may miss that target (`delta`).
+The result is an **estimate**, and you control how accurate it is.
 
 It's a faithful implementation of the CVM algorithm (Chakraborty, Vinodchandran &
 Meel, [2022](https://arxiv.org/abs/2301.10191)), specifically the total, unbiased
 variant by Karayel et al. ([ITP 2025](https://doi.org/10.4230/LIPIcs.ITP.2025.34)):
-it never fails, and its estimate is right on average. See
+it never fails, and its estimate is right on average.
+
+Counting every value exactly means remembering each one you see, so memory grows
+with how many distinct values appear. This library keeps a bounded random sample
+instead and extrapolates from it: memory stays flat whether the stream holds a
+thousand distinct values or a billion. You choose how close the estimate should be
+(`epsilon`) and how often it may miss that target (`delta`). See
 [Key concepts](#key-concepts) for the guarantees.
 
 ## Install
