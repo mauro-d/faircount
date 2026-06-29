@@ -86,10 +86,16 @@ with a `Set`, so objects/arrays would be compared by reference and never dedup.
 // distinct users
 await estimateDistinct(orders, { keyFn: (o) => o.user })
 
-// composite key: distinct (user, product) pairs.
-// Use JSON.stringify or a safe separator to avoid collisions.
-await estimateDistinct(orders, { keyFn: (o) => JSON.stringify([o.user, o.product]) })
+// composite key: combine whatever fields define distinctness for you
+await estimateDistinct(orders, { keyFn: (o) => makeYourKey(o.user, o.product) })
 ```
+
+You write `makeYourKey` yourself: combine whatever fields define distinctness
+for your data (two, three, or more) into one primitive that never collides for
+two genuinely different inputs. Naive concatenation and `JSON.stringify` both
+have sharp edges (e.g. `null`, `undefined`, and `NaN` all serialize the same
+way). Test your own encoding against your actual data; don't assume a known
+trick is automatically safe.
 
 ## Options
 
