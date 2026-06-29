@@ -53,7 +53,7 @@ test('estimate is exact when F0 never exceeds the threshold', () => {
   const cvm = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 1000, seed: 1 })
   const { data, f0 } = makeData(5000, 100, 7)
   assert.ok(f0 < cvm.threshold, 'precondition: F0 below threshold')
-  cvm.addAll(data)
+  cvm.addMany(data)
   const r = cvm.result()
   assert.equal(r.p, 1)
   assert.equal(r.samples, f0)
@@ -70,7 +70,7 @@ test('estimate stays within ε of F0 with probability ≥ 1−δ (statistical)',
   let relSum = 0
   for (let t = 0; t < trials; t++) {
     const cvm = new CVM({ epsilon, delta, expectedSize: data.length, seed: t + 1 })
-    cvm.addAll(data)
+    cvm.addMany(data)
     const rel = Math.abs(cvm.distinct - f0) / f0
     relSum += rel
     if (rel <= epsilon) within++
@@ -85,7 +85,7 @@ test('estimator is unbiased: mean over many seeds ≈ F0', () => {
   const trials = 200
   let sum = 0
   for (let t = 1; t <= trials; t++) {
-    sum += new CVM({ epsilon: 0.1, delta: 0.05, expectedSize: data.length, seed: t }).addAll(data).distinct
+    sum += new CVM({ epsilon: 0.1, delta: 0.05, expectedSize: data.length, seed: t }).addMany(data).distinct
   }
   const bias = Math.abs(sum / trials - f0) / f0
   assert.ok(bias < 0.02, `mean estimate biased by ${(bias * 100).toFixed(2)}%`)
@@ -114,7 +114,7 @@ test('keeps the buffer within the threshold (memory bound)', () => {
 
 test('reset clears state and reuses parameters', () => {
   const cvm = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 1000, seed: 2 })
-  cvm.addAll(makeData(3000, 80, 5).data)
+  cvm.addMany(makeData(3000, 80, 5).data)
   assert.ok(cvm.sampleCount > 0)
   cvm.reset()
   assert.equal(cvm.sampleCount, 0)
@@ -124,7 +124,7 @@ test('reset clears state and reuses parameters', () => {
 
 test('a fixed seed makes runs reproducible', () => {
   const { data } = makeData(50_000, 20_000, 9)
-  const a = new CVM({ epsilon: 0.1, seed: 42, expectedSize: data.length }).addAll(data).distinct
-  const b = new CVM({ epsilon: 0.1, seed: 42, expectedSize: data.length }).addAll(data).distinct
+  const a = new CVM({ epsilon: 0.1, seed: 42, expectedSize: data.length }).addMany(data).distinct
+  const b = new CVM({ epsilon: 0.1, seed: 42, expectedSize: data.length }).addMany(data).distinct
   assert.equal(a, b)
 })

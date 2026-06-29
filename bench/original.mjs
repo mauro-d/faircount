@@ -30,14 +30,14 @@ const pct = (est, f0) => `${(((est - f0) / f0) * 100).toFixed(2)}%`
   const { data, f0 } = genData(TOTAL, UNIQUE, 42)
 
   const nw = new CVM({ epsilon: EPSILON, delta: DELTA, expectedSize: TOTAL })
-  nw.addAll(data)
+  nw.addMany(data)
 
   let old = '⊥ (failed)'
   let oldThresh = '-'
   let oldSamples = '-'
   try {
     const o = new OriginalCVM({ epsilon: EPSILON, delta: DELTA, expectedSize: TOTAL })
-    o.addAll(data)
+    o.addMany(data)
     old = `${Math.round(o.distinct)} (${pct(o.distinct, f0)})`
     oldThresh = o.threshold
     oldSamples = o.sampleCount
@@ -56,8 +56,8 @@ const pct = (est, f0) => `${(((est - f0) / f0) * 100).toFixed(2)}%`
   let sumNew = 0
   let sumOld = 0
   for (let t = 1; t <= trials; t++) {
-    sumNew += new CVM({ epsilon: 0.1, delta: DELTA, expectedSize: data.length, seed: t }).addAll(data).distinct
-    sumOld += new OriginalCVM({ epsilon: 0.1, delta: DELTA, expectedSize: data.length, seed: t }).addAll(data).distinct
+    sumNew += new CVM({ epsilon: 0.1, delta: DELTA, expectedSize: data.length, seed: t }).addMany(data).distinct
+    sumOld += new OriginalCVM({ epsilon: 0.1, delta: DELTA, expectedSize: data.length, seed: t }).addMany(data).distinct
   }
   console.log(`\n=== bias over ${trials} seeds, F0 = ${f0.toLocaleString()} ===`)
   console.log(`NEW      mean ${(sumNew / trials).toFixed(1)} | bias ${pct(sumNew / trials, f0)}`)

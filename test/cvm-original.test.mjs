@@ -28,7 +28,7 @@ test('[original] threshold is ⌈(12/ε²)·log₂(8m/δ)⌉', () => {
 test('[original] exact when F0 never exceeds the threshold', () => {
   const cvm = new OriginalCVM({ epsilon: 0.5, delta: 0.1, expectedSize: 1000, seed: 1 })
   const { data, f0 } = makeData(5000, 100, 7)
-  cvm.addAll(data)
+  cvm.addMany(data)
   assert.equal(cvm.distinct, f0)
 })
 
@@ -42,8 +42,8 @@ test('[original] throws CVMFailureError on the ⊥ outcome', () => {
 test('[comparison] both variants stay within ε of F0', () => {
   const { data, f0 } = makeData(100_000, 30_000, 123)
   const opts = { epsilon: 0.1, delta: 0.05, expectedSize: data.length, seed: 7 }
-  const eNew = new CVM(opts).addAll(data).distinct
-  const eOld = new OriginalCVM(opts).addAll(data).distinct
+  const eNew = new CVM(opts).addMany(data).distinct
+  const eOld = new OriginalCVM(opts).addMany(data).distinct
   assert.ok(Math.abs(eNew - f0) / f0 <= 0.1, `new off by ${Math.abs(eNew - f0) / f0}`)
   assert.ok(Math.abs(eOld - f0) / f0 <= 0.1, `old off by ${Math.abs(eOld - f0) / f0}`)
 })

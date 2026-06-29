@@ -109,7 +109,7 @@ await estimateDistinct(orders, { keyFn: (o) => JSON.stringify([o.user, o.product
   estimate: number,  // the estimated number of distinct values
   samples: number,   // how many elements are held
   threshold: number, // the maximum it can hold
-  p: number          // internal sampling rate
+  p: number          // current sampling rate: estimate = samples / p
 }
 ```
 

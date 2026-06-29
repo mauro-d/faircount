@@ -66,7 +66,7 @@ export class OriginalCVM {
     return this
   }
 
-  addAll (elements) {
+  addMany (elements) {
     for (const element of elements) this.add(element)
     return this
   }

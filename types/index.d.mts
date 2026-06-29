@@ -26,17 +26,25 @@ export interface CVMResult {
   samples: number
   /** The maximum it can hold. */
   threshold: number
-  /** Internal sampling rate. */
+  /** The current sampling rate: `estimate` equals `samples` / `p`. */
   p: number
 }
 
 export interface EstimateOptions extends CVMOptions {
-  /** Maps each item to the value to count. Default: identity. */
+  /**
+   * Maps each item to the value to count. Must return a primitive (string or
+   * number): the engine dedups with a `Set`, so objects or arrays would be
+   * compared by reference and never dedup. Default: identity.
+   */
   keyFn?: (chunk: any) => unknown
 }
 
 export interface DistinctEstimateStreamOptions extends CVMOptions {
-  /** Maps each chunk to the value to count. Default: identity. */
+  /**
+   * Maps each chunk to the value to count. Must return a primitive (string or
+   * number): the engine dedups with a `Set`, so objects or arrays would be
+   * compared by reference and never dedup. Default: identity.
+   */
   keyFn?: (chunk: any) => unknown
   objectMode?: boolean
   highWaterMark?: number
@@ -54,10 +62,10 @@ export class CVM {
   readonly delta: number
   readonly expectedSize: number
   readonly threshold: number
-  /** Process one element. */
+  /** Records one occurrence of `element`. */
   add(element: unknown): this
-  /** Process many elements. */
-  addAll(elements: Iterable<unknown>): this
+  /** Records one occurrence of each value in `elements`. */
+  addMany(elements: Iterable<unknown>): this
   /** The estimated number of distinct values. */
   get distinct(): number
   /** How many elements are held. */
@@ -90,7 +98,7 @@ export function estimateDistinct(
   options?: EstimateOptions
 ): Promise<CVMResult>
 
-/** Sample-set capacity: `⌈(12/ε²)·ln(3m/δ)⌉`, rounded up to an even number. */
+/** The maximum number of elements that can be held: `⌈(12/ε²)·ln(3m/δ)⌉`, rounded up to an even number. */
 export function computeThreshold(epsilon: number, delta: number, expectedSize: number): number
 
 /** Create a uniform `[0, 1)` generator; with a `seed` it is deterministic. */

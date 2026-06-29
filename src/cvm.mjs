@@ -96,7 +96,7 @@ export class CVM {
     this._X = next
   }
 
-  addAll (elements) {
+  addMany (elements) {
     for (const element of elements) this.add(element)
     return this
   }
