@@ -1,7 +1,7 @@
 {
   "name": "cvm-estimator",
   "version": "0.1.0",
-  "description": "Streaming distinct-elements estimator using the CVM algorithm — bounded memory with (ε, δ) accuracy guarantees. Stream, promise and core APIs.",
+  "description": "Streaming distinct-values estimator using the CVM algorithm — bounded memory with (ε, δ) accuracy guarantees. Stream, promise and core APIs.",
   "type": "module",
   "main": "./src/index.mjs",
   "module": "./src/index.mjs",
@@ -36,6 +36,7 @@
     "cvm",
     "distinct",
     "count-distinct",
+    "unique-count",
     "cardinality",
     "streaming",
     "stream",
