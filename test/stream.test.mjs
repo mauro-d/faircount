@@ -4,7 +4,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { DistinctEstimateStream } from '../src/index.mjs'
 
-test('counts distinct elements piped through it (exact for small input)', async () => {
+test('counts distinct values piped through it (exact for small input)', async () => {
   const values = ['a', 'b', 'a', 'c', 'b', 'a']
   const counter = new DistinctEstimateStream({ epsilon: 0.5, delta: 0.1, expectedSize: 100, seed: 1 })
   await pipeline(Readable.from(values), counter)
@@ -66,7 +66,7 @@ test('propagates a source error through pipeline (single channel)', async () => 
 })
 
 test('objectMode: false delivers Buffers, so the default keyFn cannot dedup them', async () => {
-  // Simulates elements already framed upstream (e.g. by a line-splitting
+  // Simulates values already framed upstream (e.g. by a line-splitting
   // transform) and handed off as plain strings, with objectMode: false.
   const lines = ['apple', 'banana', 'apple', 'cherry']
 

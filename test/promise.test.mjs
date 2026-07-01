@@ -43,7 +43,7 @@ test('the three source kinds agree given the same seed', async () => {
   assert.ok(fromArray < 80_000 && fromArray > 0)
 })
 
-test('keyFn is applied to each element', async () => {
+test('keyFn is applied to each item', async () => {
   const orders = [{ user: 'u1' }, { user: 'u2' }, { user: 'u1' }]
   const { estimate } = await estimateDistinct(orders, {
     epsilon: 0.5, delta: 0.1, expectedSize: 100, seed: 1, keyFn: (o) => o.user

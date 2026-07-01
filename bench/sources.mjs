@@ -4,7 +4,7 @@ import { Readable } from 'node:stream'
  * A deterministic Readable that emits `total` string tokens drawn uniformly
  * from `unique` distinct values, so the true F0 is known (≈ `unique`).
  *
- * @param {number} total Number of elements to emit.
+ * @param {number} total Number of tokens to emit.
  * @param {number} unique Number of distinct values to draw from.
  * @param {number} seed LCG seed.
  * @returns {Readable}

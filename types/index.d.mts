@@ -1,4 +1,4 @@
-import { Writable } from 'node:stream'
+import { Readable, Writable } from 'node:stream'
 
 /** Parameters shared by the core, the stream, and `estimateDistinct`. */
 export interface CVMOptions {
@@ -108,7 +108,7 @@ export class DistinctEstimateStream extends Writable {
  * Accepts a sync iterable, an async iterable, or a Node `Readable`.
  */
 export function estimateDistinct(
-  source: Iterable<any> | AsyncIterable<any>,
+  source: Iterable<any> | AsyncIterable<any> | Readable,
   options?: EstimateOptions
 ): Promise<CVMResult>
 

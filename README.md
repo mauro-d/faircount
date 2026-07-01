@@ -1,4 +1,4 @@
-# cvm-estimator
+# nearcount
 
 Count the distinct values in a stream using only a small, fixed amount of memory.
 The result is an **estimate**, and you control how accurate it is.
@@ -19,7 +19,7 @@ estimate is right on average.
 ## Install
 
 ```sh
-npm install cvm-estimator
+npm install nearcount
 ```
 
 Requires Node 18 or newer. The library is published as ES modules only and has no
@@ -31,7 +31,7 @@ Accepts a single iterable (`Array`, `Set`, …), async iterable, or `Readable`
 you already have, and resolves to the result:
 
 ```js
-import { estimateDistinct } from 'cvm-estimator'
+import { estimateDistinct } from 'nearcount'
 
 const { estimate } = await estimateDistinct(values, {
   epsilon: 0.05,          // accuracy: within ±5% of the true count
@@ -50,7 +50,7 @@ transforms feeding it). Read the result once it has finished:
 
 ```js
 import { pipeline } from 'node:stream/promises'
-import { DistinctEstimateStream } from 'cvm-estimator'
+import { DistinctEstimateStream } from 'nearcount'
 
 const counter = new DistinctEstimateStream({ epsilon: 0.05, expectedSize: 1_000_000 })
 await pipeline(values, counter) // values: your source stream
@@ -73,7 +73,7 @@ new DistinctEstimateStream({ objectMode: false, keyFn: (chunk) => chunk.toString
 Drive the algorithm yourself, no I/O:
 
 ```js
-import { CVM } from 'cvm-estimator'
+import { CVM } from 'nearcount'
 
 const cvm = new CVM({ epsilon: 0.05, expectedSize: 1_000_000 })
 for (const value of values) {
@@ -83,6 +83,10 @@ for (const value of values) {
 
 console.log(cvm.result())  // estimate + internal state
 ```
+
+`cvm.distinct` and `cvm.sampleCount` read the current estimate and the number of
+values held at any point, without building a full result object; `cvm.result()`
+bundles both (as `estimate` and `samples`) with `threshold` and `p`.
 
 There's no `keyFn` here: pass `add()` whatever value you want counted.
 
@@ -141,7 +145,7 @@ pass a seed for a deterministic `[0, 1)` sequence, or call it with no arguments
 to get `Math.random` itself.
 
 ```js
-import { createRandom } from 'cvm-estimator'
+import { createRandom } from 'nearcount'
 
 const a = createRandom(42)
 const b = createRandom(42)
@@ -178,7 +182,7 @@ takes the same three parameters from [Options](#options) and computes that
 capacity directly, so you can check the cost before running anything:
 
 ```js
-import { computeThreshold } from 'cvm-estimator'
+import { computeThreshold } from 'nearcount'
 
 computeThreshold(0.05, 0.01, 1_000_000)  // 93694
 computeThreshold(0.025, 0.01, 1_000_000) // 374772, about 4x: the threshold scales as 1/epsilon²

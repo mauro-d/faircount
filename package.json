@@ -1,5 +1,5 @@
 {
-  "name": "cvm-estimator",
+  "name": "nearcount",
   "version": "0.1.0",
   "description": "Streaming distinct-values estimator using the CVM algorithm — bounded memory with (ε, δ) accuracy guarantees. Stream, promise and core APIs.",
   "type": "module",

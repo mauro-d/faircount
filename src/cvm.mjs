@@ -48,7 +48,7 @@ export class CVM {
     if (expectedSize === 0 && !warnedNoExpectedSize) {
       warnedNoExpectedSize = true
       process.emitWarning(
-        'cvm-estimator: expectedSize was not set; the (ε, δ) guarantee assumes it bounds the stream length. Pass it to size the threshold correctly.',
+        'nearcount: expectedSize was not set; the (ε, δ) guarantee assumes it bounds the stream length. Pass it to size the threshold correctly.',
         { code: 'CVM_NO_EXPECTED_SIZE' }
       )
     }
