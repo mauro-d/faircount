@@ -10,10 +10,11 @@ thousand distinct values or a billion. You choose how close the estimate should 
 (`epsilon`) and how often it may miss that target (`delta`). See
 [Key concepts](#key-concepts) for the guarantees.
 
-This library is a faithful implementation of the CVM algorithm (Chakraborty, Vinodchandran &
-Meel, [2022](https://arxiv.org/abs/2301.10191)), specifically the total, unbiased
-variant by Karayel et al. ([ITP 2025](https://doi.org/10.4230/LIPIcs.ITP.2025.34)):
-it never fails, and its estimate is right on average.
+This library is a faithful implementation of the CVM algorithm (Chakraborty,
+Vinodchandran & Meel, [2022](https://arxiv.org/abs/2301.10191)), specifically the
+total, unbiased variant by Karayel et al.
+([ITP 2025](https://doi.org/10.4230/LIPIcs.ITP.2025.34)): it never fails, and its
+estimate is right on average.
 
 ## Install
 
@@ -131,8 +132,8 @@ trick is automatically safe.
 ```
 
 If the stream has fewer distinct values than `threshold`, nothing is ever dropped
-and the result is exact. Otherwise it's an estimate that varies slightly between
-runs, because of randomness inside the algorithm.
+and the result is exact. Otherwise it's an estimate: randomness inside the
+algorithm makes it vary slightly between runs, unless you set a `seed`.
 
 **Reproducible randomness.** `createRandom` is the generator factory behind
 `seed`, exported separately so you can use the same kind of generator yourself:
@@ -192,7 +193,7 @@ These numbers come from real runs and are meant to give a feel for the
 trade-off in practice. They don't prove the algorithm is correct: the paper
 does that.
 
-Memory and time at increasing scale (epsilon=0.05, delta=0.01 throughout):
+Memory and time as scale grows, with epsilon=0.05 and delta=0.01 fixed:
 
 | Items processed | Distinct values | `Set` memory | CVM memory | `Set` time | CVM time | Observed error |
 | --- | --- | --- | --- | --- | --- | --- |
