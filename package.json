@@ -15,8 +15,6 @@
   },
   "files": [
     "src",
-    "!src/cvm-original.mjs",
-    "!src/errors.mjs",
     "types",
     "README.md",
     "LICENSE"
