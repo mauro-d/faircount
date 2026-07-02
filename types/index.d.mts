@@ -27,7 +27,7 @@ export interface CVMResult {
   estimate: number
   /** How many values are held. */
   samples: number
-  /** The maximum it can hold. */
+  /** The maximum number of values the sample can hold. */
   threshold: number
   /** The current sampling rate: `estimate` equals `samples` / `p`. */
   p: number
@@ -102,7 +102,7 @@ export class DistinctEstimateStream extends Writable {
   result(): CVMResult
   /** The estimated number of distinct values. */
   get distinct(): number
-  /** The maximum it can hold. */
+  /** The maximum number of values the sample can hold. */
   get threshold(): number
 }
 

@@ -29,7 +29,7 @@ runtime dependencies. TypeScript types are included.
 
 ## Promise API — `estimateDistinct`
 
-Accepts a single iterable (`Array`, `Set`, …), async iterable, or `Readable`
+Accepts a sync iterable (`Array`, `Set`, …), an async iterable, or a `Readable`
 you already have, and resolves to the result:
 
 ```js
@@ -60,8 +60,8 @@ await pipeline(values, counter) // values: your source stream
 console.log(counter.result()) // { estimate, samples, threshold, p }
 ```
 
-By default the stream is in object mode: each write is one value of any type,
-taken as-is. If your source is a byte stream of raw strings or Buffers, set
+In the default object mode, each write is one value of any type, taken as-is.
+If your source is a byte stream of raw strings or Buffers, set
 `objectMode: false` to feed it directly. Node then delivers each write as a
 Buffer, and two Buffers with the same bytes are different objects, so duplicates
 go undetected unless you decode them in `keyFn`:
@@ -104,7 +104,7 @@ return a **primitive** (typically a string or number): the engine dedups with a
 // distinct users
 await estimateDistinct(orders, { keyFn: (o) => o.user })
 
-// composite key: combine whatever fields define distinctness for you
+// composite key
 await estimateDistinct(orders, { keyFn: (o) => makeYourKey(o.user, o.product) })
 ```
 
@@ -112,8 +112,8 @@ You write `makeYourKey` yourself: combine whatever fields define distinctness
 for your data (two, three, or more) into one primitive that never collides for
 two genuinely different inputs. Naive concatenation and `JSON.stringify` both
 have sharp edges (e.g. in a JSON array `null`, `undefined`, and `NaN` all
-serialize to `null`). Test your own encoding against your actual data; don't assume a known
-trick is automatically safe.
+serialize to `null`). Test your own encoding against your actual data; don't
+assume a known trick is automatically safe.
 
 ## Options
 
@@ -132,7 +132,7 @@ trick is automatically safe.
 {
   estimate: number,  // the estimated number of distinct values
   samples: number,   // how many values are held
-  threshold: number, // the maximum it can hold
+  threshold: number, // the cap on samples
   p: number          // current sampling rate: estimate = samples / p
 }
 ```
@@ -171,15 +171,16 @@ or your `keyFn`, and travel on a single channel:
 The quantity being estimated is `F0`, the number of distinct values in a stream.
 
 - **Bounded memory.** Instead of remembering every distinct value, the algorithm
-  keeps a random sample capped at `n = ⌈(12/ε²)·ln(3m/δ)⌉` entries, rounded up to
-  an even number (`O((1/ε²)·log(m/δ))` space), however many distinct values appear. `m`
-  (`expectedSize`) enters only through a logarithm, so a rough upper bound is enough.
+  keeps a random sample capped at `n = ⌈(12/ε²)·ln(3m/δ)⌉` entries (rounded up
+  to an even number; `O((1/ε²)·log(m/δ))` space), however many distinct values
+  appear. `m` (`expectedSize`) enters only through a logarithm, so a rough upper
+  bound is enough.
 - **`(ε, δ)` guarantee.** With probability at least `1 − δ`, the estimate differs
   from `F0` by at most `ε·F0` — a relative error of at most `ε`. That bound is a
   formally proved worst case; in practice the estimate is usually much closer.
-- **Total and unbiased.** The algorithm never fails (the rare `⊥` outcome some
-  versions can return), and the expected value of its result is exactly `F0`:
-  no systematic over- or under-counting.
+- **Total and unbiased.** The algorithm never fails (no `⊥`, the rare give-up
+  outcome the original algorithm can return), and the expected value of its
+  result is exactly `F0`: no systematic over- or under-counting.
 
 **How much memory will this cost?** `computeThreshold(epsilon, delta, expectedSize)`
 takes the same three parameters from [Options](#options) and returns that capacity —

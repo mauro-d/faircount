@@ -1,6 +1,6 @@
-// Uniform [0, 1) generator (same contract as Math.random). No seed → Math.random
-// (keeps the (ε, δ) guarantee independent of the input run-to-run). Seed → a
-// deterministic mulberry32 PRNG for reproducible runs.
+// Uniform [0, 1) generator (same contract as Math.random). No seed → Math.random:
+// fresh randomness each run, so δ stays a per-run probability rather than one
+// frozen outcome. Seed → a deterministic mulberry32 PRNG for reproducible runs.
 export function createRandom (seed) {
   if (seed === undefined || seed === null) return Math.random
 
