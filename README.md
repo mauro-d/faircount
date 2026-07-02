@@ -1,5 +1,8 @@
 # faircount
 
+[![CI](https://github.com/mauro-d/faircount/actions/workflows/ci.yml/badge.svg)](https://github.com/mauro-d/faircount/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/faircount)](https://www.npmjs.com/package/faircount)
+
 Count the distinct values in a stream using only a small, fixed amount of memory.
 The result is an **estimate**, and a *fair* one — unbiased, so it is right on
 average, with proven bounds on how far off a single run may land and on how
