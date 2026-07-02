@@ -182,18 +182,21 @@ The quantity being estimated is `F0`, the number of distinct values in a stream.
   no systematic over- or under-counting.
 
 **How much memory will this cost?** `computeThreshold(epsilon, delta, expectedSize)`
-takes the same three parameters from [Options](#options) and computes that
-capacity directly, so you can check the cost before running anything:
+takes the same three parameters from [Options](#options) and returns that capacity —
+a **count of values held** — so you can size a run before starting it:
 
 ```js
 import { computeThreshold } from 'faircount'
 
-computeThreshold(0.05, 0.01, 1_000_000)  // 93694
+computeThreshold(0.05, 0.01, 1_000_000)  // 93694 values held at most
 computeThreshold(0.025, 0.01, 1_000_000) // 374772, about 4x: the threshold scales as 1/epsilon²
 ```
 
 This is the same number you'd see as `threshold` in the `result()` of a `CVM`
-constructed with the same parameters.
+constructed with the same parameters. What those entries weigh in bytes depends
+on the values themselves (a number, a short string, a long composite key…), so
+it can't be derived from the parameters alone: for end-to-end measurements, see
+the [Benchmarks](#benchmarks) below.
 
 ## Benchmarks
 
