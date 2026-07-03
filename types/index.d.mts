@@ -15,7 +15,11 @@ export interface CVMOptions {
    * `CVM_NO_EXPECTED_SIZE` process warning.
    */
   expectedSize?: number
-  /** Integer seed for the built-in generator; set it for reproducible runs. */
+  /**
+   * Integer seed for the built-in generator: with the same seed and data, the
+   * estimate is identical on every run. The trade-off: repeated runs share one
+   * fixed draw, so the error repeats instead of averaging out.
+   */
   seed?: number
   /** Randomness source returning a float in `[0, 1)`. Defaults to `Math.random`; overrides `seed`. */
   random?: () => number
@@ -51,8 +55,8 @@ export interface DistinctEstimateStreamOptions extends CVMOptions {
   keyFn?: (chunk: any) => Primitive
   /**
    * Treats each write as one opaque value when `true` (the default, accepts
-   * any type), or as bytes — a string, `Buffer`, `TypedArray`, or `DataView` —
-   * when `false` (anything else throws). In `false` mode, Node converts every
+   * any type), or as bytes when `false`: a string, `Buffer`, `TypedArray`, or
+   * `DataView` (anything else throws). In `false` mode, Node converts every
    * chunk to a `Buffer` before it arrives here, so the default `keyFn` won't
    * dedup matching content: provide a `keyFn` that calls `.toString()` on the
    * chunk. Either way, a raw byte stream still needs to be framed into values

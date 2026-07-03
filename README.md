@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/faircount)](https://www.npmjs.com/package/faircount)
 
 Count the distinct values in a stream using only a small, fixed amount of memory.
-The result is an **estimate**, and a *fair* one — unbiased, so it is right on
+The result is an **estimate**, and a *fair* one: unbiased, so it is right on
 average, with proven bounds on how far off a single run may land and on how
 often that can happen.
 
@@ -159,6 +159,11 @@ a() === b() // true: same seed, same sequence
 createRandom() === Math.random // true: no seed, the real thing
 ```
 
+A seeded run is deterministic: with the same seed and the same data, every run
+returns the same estimate. Keep the trade-off in mind: the `(ε, δ)` guarantee
+describes the odds of a fresh draw, while a seeded run repeats one fixed draw.
+Repeating it returns the same error instead of averaging it out.
+
 ## Errors
 
 The algorithm never fails (it is total). Invalid options throw a `RangeError` or a
@@ -179,15 +184,15 @@ The quantity being estimated is `F0`, the number of distinct values in a stream.
   appear. `m` (`expectedSize`) enters only through a logarithm, so a rough upper
   bound is enough.
 - **`(ε, δ)` guarantee.** With probability at least `1 − δ`, the estimate differs
-  from `F0` by at most `ε·F0` — a relative error of at most `ε`. That bound is a
+  from `F0` by at most `ε·F0` (a relative error of at most `ε`). That bound is a
   formally proved worst case; in practice the estimate is usually much closer.
 - **Total and unbiased.** The algorithm never fails (no `⊥`, the rare give-up
   outcome the original algorithm can return), and the expected value of its
   result is exactly `F0`: no systematic over- or under-counting.
 
 **How much memory will this cost?** `computeThreshold(epsilon, delta, expectedSize)`
-takes the same three parameters from [Options](#options) and returns that capacity —
-a **count of values held** — so you can size a run before starting it:
+takes the same three parameters from [Options](#options) and returns that
+capacity, a **count of values held**, so you can size a run before starting it:
 
 ```js
 import { computeThreshold } from 'faircount'
