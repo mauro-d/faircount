@@ -52,7 +52,7 @@ async function runScenario (scenario) {
     try {
       const r = await runIsolated(kind, scenario)
       estimates[kind] = Number(r.estimate)
-      const label = kind === 'exact' ? 'EXACT (Set) ' : 'CVM estimate'
+      const label = kind === 'exact' ? 'EXACT (Set) ' : 'faircount   '
       console.log(`[${label}] distinct: ${r.estimate} | RAM: ${r.ram} MB | time: ${r.ms} ms`)
     } catch (e) {
       console.error(`error running '${kind}' for scenario '${scenario.name}':`, e instanceof Error ? e.message : e)
@@ -60,12 +60,12 @@ async function runScenario (scenario) {
   }
   if (estimates.exact && estimates.cvm) {
     const pct = (Math.abs(estimates.cvm - estimates.exact) / estimates.exact) * 100
-    console.log(`[observed err ] ${pct.toFixed(2)}% (CVM vs exact)`)
+    console.log(`[observed err ] ${pct.toFixed(2)}% (faircount vs exact)`)
   }
 }
 
 async function main () {
-  console.log('=== CVM benchmark (isolated processes) ===')
+  console.log('=== faircount benchmark (isolated processes) ===')
   // Scenarios also run strictly one after another for the same reason.
   for (const scenario of scenarios) {
     await runScenario(scenario)
