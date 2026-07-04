@@ -67,16 +67,18 @@ export class CVM {
     this._p = 1
   }
 
-  // Algorithm 3, lines 3-10: drop the element, re-add with probability p; when the
-  // buffer is full, keep a uniformly random half and halve p.
+  // Algorithm 3, lines 3-10: insert the element with probability p, remove it
+  // otherwise; when the buffer fills up, keep a uniformly random half and halve p.
   add (element) {
-    const X = this._X
-    X.delete(element)
-    if (this._random() < this._p) X.add(element)
-
-    if (X.size === this.threshold) {
-      this._subsample()
-      this._p /= 2
+    if (this._random() < this._p) {
+      const X = this._X
+      X.add(element)
+      if (X.size === this.threshold) {
+        this._subsample()
+        this._p /= 2
+      }
+    } else {
+      this._X.delete(element)
     }
     return this
   }

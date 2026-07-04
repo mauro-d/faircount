@@ -215,11 +215,11 @@ does that.
 
 Memory and time as scale grows, with epsilon=0.05 and delta=0.01 fixed:
 
-| Items processed | Distinct values | `Set` memory | CVM memory | `Set` time | CVM time | Observed error |
+| Items processed | Distinct values | `Set` memory | faircount memory | `Set` time | faircount time | Observed error |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2M  | ~400K | ~30 MB  | ~5 MB  | <1 s | <1 s | 0.1% |
-| 10M | ~2M   | ~160 MB | ~6 MB  | ~5 s | ~2 s | 0.7% |
-| 50M | ~10M  | ~900 MB | ~10 MB | ~30 s | ~7 s | 0.5% |
+| 2M  | ~400K | ~30 MB  | ~5 MB  | <1 s | <1 s | 0.4% |
+| 10M | ~2M   | ~160 MB | ~6 MB  | ~5 s | ~1.5 s | <0.1% |
+| 50M | ~10M  | ~900 MB | ~10 MB | ~30 s | ~7 s | 0.1% |
 
 Memory stays nearly flat as distinct values grow; an exact `Set` grows with
 them.
@@ -227,11 +227,11 @@ them.
 `epsilon` trades accuracy for memory directly, holding scale fixed at the 10M
 row above (~2 million distinct, delta=0.01):
 
-| epsilon | CVM memory | Observed error |
+| epsilon | faircount memory | Observed error |
 | --- | --- | --- |
-| 0.05 | ~6 MB   | 0.7% |
-| 0.10 | ~1.7 MB | 0.3% |
-| 0.20 | ~0.6 MB | 2.1% |
+| 0.05 | ~6 MB   | <0.1% |
+| 0.10 | ~1.7 MB | 0.5% |
+| 0.20 | ~0.6 MB | 2.4% |
 
 Memory and time vary by machine, Node version, and data shape. The observed
 error also varies from run to run, since the estimator isn't seeded by
