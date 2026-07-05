@@ -21,6 +21,21 @@ total, unbiased variant by Karayel et al.
 ([ITP 2025](https://doi.org/10.4230/LIPIcs.ITP.2025.34)): it never fails, and the
 estimate's expected value is exactly the true count.
 
+## Contents
+
+- [Install](#install)
+- [Promise API — `estimateDistinct`](#promise-api--estimatedistinct)
+- [Stream API — `DistinctEstimateStream`](#stream-api--distinctestimatestream)
+- [Core engine — `CVM`](#core-engine--cvm)
+- [Counting by a key (`keyFn`)](#counting-by-a-key-keyfn)
+- [Options](#options)
+- [Result](#result)
+- [Errors](#errors)
+- [Key concepts](#key-concepts)
+- [Benchmarks](#benchmarks)
+- [References](#references)
+- [License](#license)
+
 ## Install
 
 ```sh
