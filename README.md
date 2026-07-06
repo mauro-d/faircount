@@ -232,9 +232,9 @@ Memory and time as scale grows, with epsilon=0.05 and delta=0.01 fixed:
 
 | Items processed | Distinct values | `Set` memory | faircount memory | `Set` time | faircount time | Observed error |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2M  | ~400K | ~30 MB  | ~5 MB  | <1 s | <1 s | 0.4% |
-| 10M | ~2M   | ~160 MB | ~6 MB  | ~5 s | ~1.5 s | <0.1% |
-| 50M | ~10M  | ~900 MB | ~10 MB | ~30 s | ~7 s | 0.1% |
+| 2M  | ~400K | ~30 MB  | ~5 MB  | <1 s | <1 s | <0.1% |
+| 10M | ~2M   | ~160 MB | ~6 MB  | ~5 s | ~1.5 s | 0.9% |
+| 50M | ~10M  | ~900 MB | ~7 MB  | ~30 s | ~7 s | 0.4% |
 
 Memory stays nearly flat as distinct values grow; an exact `Set` grows with
 them.
@@ -244,9 +244,24 @@ row above (~2 million distinct, delta=0.01):
 
 | epsilon | faircount memory | Observed error |
 | --- | --- | --- |
-| 0.05 | ~6 MB   | <0.1% |
-| 0.10 | ~1.7 MB | 0.5% |
-| 0.20 | ~0.6 MB | 2.4% |
+| 0.05 | ~6 MB   | 0.9% |
+| 0.10 | ~1.7 MB | 0.3% |
+| 0.20 | ~0.6 MB | 0.3% |
+
+Scale and epsilon aren't the whole story: the shape of the stream matters too.
+Same scale (10M items, epsilon=0.05), three shapes:
+
+| Stream shape | Distinct values | `Set` memory | faircount memory | `Set` time | faircount time | Observed error |
+| --- | --- | --- | --- | --- | --- | --- |
+| uniform | ~2M | ~160 MB | ~6 MB | ~5 s | ~1.5 s | 0.9% |
+| zipf-like (skewed) | ~1.1M | ~105 MB | ~6.6 MB | ~3 s | ~6.5 s | 0.2% |
+| uniform, below threshold | ~50K | ~4 MB | ~4 MB | ~1.7 s | ~1.8 s | 0% (exact) |
+
+On skewed streams the exact `Set` is faster (it only ever inserts, while the
+estimator also deletes), but uses 16x the memory. Below the threshold nothing
+is ever sampled away: the result is exact, the sample holds every distinct
+value, and memory sits at parity with a plain `Set` — the estimator pays off
+above the threshold.
 
 Memory and time vary by machine, Node version, and data shape. The observed
 error also varies from run to run, since the estimator isn't seeded by

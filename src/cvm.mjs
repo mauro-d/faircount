@@ -65,6 +65,7 @@ export class CVM {
     this._random = random ?? createRandom(seed)
     this._X = new Set()
     this._p = 1
+    this._holes = 0
   }
 
   // Algorithm 3, lines 3-10: insert the element with probability p, remove it
@@ -77,10 +78,22 @@ export class CVM {
         this._subsample()
         this._p /= 2
       }
-    } else {
-      this._X.delete(element)
+    } else if (this._X.delete(element)) {
+      this._maybeCompact()
     }
     return this
+  }
+
+  // V8 keeps deleted entries in the Set's internal chains until the table is
+  // rebuilt, so hot-key churn on skewed streams degrades lookups. Copying the
+  // Set compacts it without touching membership, order, or randomness (same
+  // seed, same estimate); holes >= max(|X|, 1024) keeps the copy amortized O(1).
+  _maybeCompact () {
+    this._holes++
+    if (this._holes >= this._X.size && this._holes >= 1024) {
+      this._X = new Set(this._X)
+      this._holes = 0
+    }
   }
 
   // Keep a uniformly random n/2-subset of the buffer (partial Fisher–Yates:
@@ -100,6 +113,7 @@ export class CVM {
     const next = new Set()
     for (let i = 0; i < keep; i++) next.add(arr[i])
     this._X = next
+    this._holes = 0
   }
 
   addMany (elements) {
@@ -127,6 +141,7 @@ export class CVM {
   reset () {
     this._X = new Set()
     this._p = 1
+    this._holes = 0
     return this
   }
 }
