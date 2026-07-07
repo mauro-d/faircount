@@ -174,6 +174,23 @@ test('same seed reproduces the same estimate under hot-key churn', () => {
   assert.ok(maxSamples <= cvm.threshold, `samples ${maxSamples} exceeded threshold ${cvm.threshold}`)
 })
 
+test('addMany takes arrays and other iterables alike', () => {
+  const { data } = makeData(5000, 100, 7)
+  const fromArray = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 5000, seed: 3 }).addMany(data).distinct
+  const fromIterable = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 5000, seed: 3 }).addMany(data.values()).distinct
+  assert.equal(fromArray, fromIterable)
+
+  // An array subclass with its own iterator must be iterated through it.
+  class OddOnly extends Array {
+    * [Symbol.iterator] () {
+      for (let i = 0; i < this.length; i++) if (this[i] % 2 === 1) yield this[i]
+    }
+  }
+  const cvm = new CVM({ epsilon: 0.5, delta: 0.5, expectedSize: 10, seed: 1 })
+  cvm.addMany(OddOnly.from([1, 2, 3, 4, 5]))
+  assert.equal(cvm.distinct, 3)
+})
+
 test('reset clears state and reuses parameters', () => {
   const cvm = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 1000, seed: 2 })
   cvm.addMany(makeData(3000, 80, 5).data)

@@ -10,6 +10,11 @@ test('estimateDistinct accepts a sync iterable (Array)', async () => {
   assert.equal(estimate, 4)
 })
 
+test('estimateDistinct accepts a sync non-array iterable (Set)', async () => {
+  const { estimate } = await estimateDistinct(new Set(VALUES), { epsilon: 0.5, delta: 0.1, expectedSize: 100, seed: 1 })
+  assert.equal(estimate, 4)
+})
+
 test('estimateDistinct accepts an async iterable', async () => {
   async function * gen () {
     for (const v of VALUES) yield v

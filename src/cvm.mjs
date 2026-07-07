@@ -116,8 +116,15 @@ export class CVM {
     this._holes = 0
   }
 
+  // Plain arrays skip the iterator protocol: measured clearly faster in the
+  // exact regime, never slower beyond run noise elsewhere. The iterator identity
+  // check keeps subclasses with a custom iterator on the generic path.
   addMany (elements) {
-    for (const element of elements) this.add(element)
+    if (Array.isArray(elements) && elements[Symbol.iterator] === Array.prototype[Symbol.iterator]) {
+      for (let i = 0; i < elements.length; i++) this.add(elements[i])
+    } else {
+      for (const element of elements) this.add(element)
+    }
     return this
   }
 
