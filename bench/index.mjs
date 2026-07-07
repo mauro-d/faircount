@@ -12,7 +12,7 @@ const here = dirname(fileURLToPath(import.meta.url))
  * the only path that configures a benchmark run.
  *
  * @param {'cvm' | 'exact'} kind
- * @param {{ total: number, unique: number, epsilon: number, delta: number, seed: number }} scenario
+ * @param {{ total: number, unique: number, epsilon: number, delta: number, seed: number, distribution: 'uniform' | 'zipf' }} scenario
  * @returns {Promise<{ name: string, estimate: string, ram: number, ms: number }>}
  */
 function runIsolated (kind, scenario) {

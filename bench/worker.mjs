@@ -27,7 +27,7 @@ async function run () {
   // identical; the only difference measured is the *retained* set (sample set vs
   // the full distinct set). A GC right before measuring isolates retained memory.
   if (global.gc) global.gc()
-  const source = createTokenStream(scenario.total, scenario.unique, scenario.seed)
+  const source = createTokenStream(scenario.total, scenario.unique, scenario.seed, scenario.distribution)
   // No fixed seed for the estimator: use the production default (Math.random) so
   // the benchmark shows a freshly-drawn estimate each run rather than a single
   // repeated deterministic draw. The scenario's seed only fixes the synthetic

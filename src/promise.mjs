@@ -15,6 +15,9 @@ export async function estimateDistinct (source, options = {}) {
 
   if (source != null && typeof source[Symbol.asyncIterator] === 'function') {
     for await (const chunk of source) cvm.add(keyFn(chunk))
+  } else if (Array.isArray(source) && source[Symbol.iterator] === Array.prototype[Symbol.iterator]) {
+    // Plain arrays skip the iterator protocol: measured consistently faster, as in addMany.
+    for (let i = 0; i < source.length; i++) cvm.add(keyFn(source[i]))
   } else if (source != null && typeof source[Symbol.iterator] === 'function') {
     for (const chunk of source) cvm.add(keyFn(chunk))
   } else {

@@ -17,6 +17,21 @@ function makeData (total, unique, seed) {
   return { data, f0: set.size }
 }
 
+// Skewed variant of the same workload: log-uniform ("zipf-like") ids, so a few
+// hot values dominate the stream and the delete branch churns on them.
+function makeSkewedData (total, unique, seed) {
+  const data = []
+  const set = new Set()
+  let s = seed
+  for (let i = 0; i < total; i++) {
+    s = (s * 48271) % 2147483647
+    const v = `v${Math.floor(Math.exp((s / 2147483647) * Math.log(unique))) - 1}`
+    data.push(v)
+    set.add(v)
+  }
+  return { data, f0: set.size }
+}
+
 test('computeThreshold is ⌈(12/ε²)·ln(3m/δ)⌉ rounded up to even', () => {
   const eps = 0.25
   const delta = 0.01
@@ -79,7 +94,7 @@ test('estimate is exact when F0 never exceeds the threshold', () => {
   assert.equal(r.estimate, f0)
 })
 
-test('estimate stays within ε of F0 with probability ≥ 1−δ (statistical)', () => {
+test('estimate stays within ε of F0 with probability ≥ 1-δ (statistical)', () => {
   const epsilon = 0.1
   const delta = 0.05
   const { data, f0 } = makeData(100_000, 30_000, 123)
@@ -129,6 +144,51 @@ test('keeps the buffer within the threshold (memory bound)', () => {
   }
   assert.ok(maxSamples <= cvm.threshold, `samples ${maxSamples} exceeded threshold ${cvm.threshold}`)
   assert.ok(cvm.result().p < 1, 'sub-sampling should have engaged')
+})
+
+test('stays unbiased on a skewed stream (hot-key churn in the delete branch)', () => {
+  const { data, f0 } = makeSkewedData(60_000, 30_000, 5)
+  const trials = 150
+  let sum = 0
+  for (let t = 1; t <= trials; t++) {
+    sum += new CVM({ epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: t }).addMany(data).distinct
+  }
+  const bias = Math.abs(sum / trials - f0) / f0
+  assert.ok(bias < 0.03, `mean estimate biased by ${(bias * 100).toFixed(2)}% on skewed data`)
+})
+
+test('same seed reproduces the same estimate under hot-key churn', () => {
+  const { data, f0 } = makeSkewedData(60_000, 30_000, 5)
+  const opts = { epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: 42 }
+  assert.ok(f0 > new CVM(opts).threshold, 'precondition: sub-sampling engages')
+  const a = new CVM(opts).addMany(data).distinct
+  const b = new CVM(opts).addMany(data).distinct
+  assert.equal(a, b)
+
+  const cvm = new CVM(opts)
+  let maxSamples = 0
+  for (const v of data) {
+    cvm.add(v)
+    if (cvm.sampleCount > maxSamples) maxSamples = cvm.sampleCount
+  }
+  assert.ok(maxSamples <= cvm.threshold, `samples ${maxSamples} exceeded threshold ${cvm.threshold}`)
+})
+
+test('addMany takes arrays and other iterables alike', () => {
+  const { data } = makeData(5000, 100, 7)
+  const fromArray = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 5000, seed: 3 }).addMany(data).distinct
+  const fromIterable = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 5000, seed: 3 }).addMany(data.values()).distinct
+  assert.equal(fromArray, fromIterable)
+
+  // An array subclass with its own iterator must be iterated through it.
+  class OddOnly extends Array {
+    * [Symbol.iterator] () {
+      for (let i = 0; i < this.length; i++) if (this[i] % 2 === 1) yield this[i]
+    }
+  }
+  const cvm = new CVM({ epsilon: 0.5, delta: 0.5, expectedSize: 10, seed: 1 })
+  cvm.addMany(OddOnly.from([1, 2, 3, 4, 5]))
+  assert.equal(cvm.distinct, 3)
 })
 
 test('reset clears state and reuses parameters', () => {
