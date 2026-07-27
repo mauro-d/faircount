@@ -48,6 +48,39 @@ test('the three source kinds agree given the same seed', async () => {
   assert.ok(fromArray < 80_000 && fromArray > 0)
 })
 
+test('a long Readable does not pile up pending callbacks', async () => {
+  // `Readable.from` hands over one value per read, so iterating it with
+  // `for await` leaves a nextTick callback pending for each and the heap runs
+  // out. Counting those beats watching the heap, which also holds garbage the
+  // collector has not got to yet.
+  const total = 200_000
+  function * tokens () {
+    for (let i = 0; i < total; i++) yield `v${i % 40_000}`
+  }
+
+  const realNextTick = process.nextTick
+  let pending = 0
+  let peak = 0
+  process.nextTick = function (task, ...args) {
+    pending++
+    if (pending > peak) peak = pending
+    return realNextTick.call(process, (...inner) => {
+      pending--
+      return task(...inner)
+    }, ...args)
+  }
+
+  try {
+    await estimateDistinct(Readable.from(tokens(), { objectMode: true }), {
+      epsilon: 0.2, delta: 0.05, expectedSize: total
+    })
+  } finally {
+    process.nextTick = realNextTick
+  }
+
+  assert.ok(peak < 1000, `${peak} callbacks were pending at once over ${total} values`)
+})
+
 test('keyFn is applied to each item', async () => {
   const orders = [{ user: 'u1' }, { user: 'u2' }, { user: 'u1' }]
   const { estimate } = await estimateDistinct(orders, {
