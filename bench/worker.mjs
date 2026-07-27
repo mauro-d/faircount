@@ -1,18 +1,46 @@
 import { pipeline } from 'node:stream/promises'
-import { DistinctEstimateStream } from '../src/index.mjs'
-import { createTokenStream } from './sources.mjs'
+import { CVM, DistinctEstimateStream } from '../src/index.mjs'
+import { createTokenSource, createTokenStream } from './sources.mjs'
 import { ExactDistinctStream } from './baseline.mjs'
 
 const kind = process.argv[2]
 const scenario = JSON.parse(process.argv[3] ?? 'null')
 
-if (kind !== 'cvm' && kind !== 'exact') {
-  console.error('usage: worker.mjs <cvm|exact> <scenarioJSON>')
+if (kind !== 'cvm' && kind !== 'exact' && kind !== 'accuracy') {
+  console.error('usage: worker.mjs <cvm|exact|accuracy> <scenarioJSON>')
   process.exit(1)
 }
 if (!scenario) {
-  console.error('usage: worker.mjs <cvm|exact> <scenarioJSON>')
+  console.error('usage: worker.mjs <cvm|exact|accuracy> <scenarioJSON>')
   process.exit(1)
+}
+
+/**
+ * Estimate the same stream `scenario.accuracyRuns` times in one pass and print
+ * every estimate. A single estimate says little: the spread between runs at one
+ * epsilon is wide enough to invert the ordering between two epsilons, so the
+ * error column is only meaningful as a median over runs. Memory is not measured
+ * here, since several estimators are alive at once; that is the `cvm` run's job.
+ *
+ * @returns {Promise<void>}
+ */
+function runAccuracy () {
+  // Pulled straight from the source rather than through a stream: this one hands
+  // over a value per read, so iterating it leaves a nextTick callback pending for
+  // each and the heap runs out at tens of millions of items. The run measures the
+  // estimator's statistics anyway, not the pipeline.
+  const next = createTokenSource(scenario.total, scenario.unique, scenario.seed, scenario.distribution)
+  const estimators = Array.from({ length: scenario.accuracyRuns }, () =>
+    new CVM({ epsilon: scenario.epsilon, delta: scenario.delta, expectedSize: scenario.total }))
+
+  const start = performance.now()
+  for (let value = next(); value !== null; value = next()) {
+    for (let i = 0; i < estimators.length; i++) estimators[i].add(value)
+  }
+  const ms = performance.now() - start
+
+  const estimates = estimators.map((c) => c.distinct.toFixed(0)).join(',')
+  console.log(`RESULT|accuracy|${estimates}|0|${ms.toFixed(0)}`)
 }
 
 /**
@@ -23,6 +51,8 @@ if (!scenario) {
  * change what gets measured.
  */
 async function run () {
+  if (kind === 'accuracy') return runAccuracy()
+
   // Both engines are driven through the same pipeline so transient allocation is
   // identical; the only difference measured is the *retained* set (sample set vs
   // the full distinct set). A GC right before measuring isolates retained memory.

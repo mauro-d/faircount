@@ -12,7 +12,7 @@ const here = dirname(fileURLToPath(import.meta.url))
  * the only path that configures a benchmark run.
  *
  * @param {'cvm' | 'exact'} kind
- * @param {{ total: number, unique: number, epsilon: number, delta: number, seed: number, distribution: 'uniform' | 'zipf' }} scenario
+ * @param {{ total: number, unique: number, epsilon: number, delta: number, seed: number, distribution: 'uniform' | 'zipf', accuracyRuns: number }} scenario
  * @returns {Promise<{ name: string, estimate: string, ram: number, ms: number }>}
  */
 function runIsolated (kind, scenario) {
@@ -58,9 +58,21 @@ async function runScenario (scenario) {
       console.error(`error running '${kind}' for scenario '${scenario.name}':`, e instanceof Error ? e.message : e)
     }
   }
-  if (estimates.exact && estimates.cvm) {
-    const pct = (Math.abs(estimates.cvm - estimates.exact) / estimates.exact) * 100
-    console.log(`[observed err ] ${pct.toFixed(2)}% (faircount vs exact)`)
+  // The error is reported over several estimates rather than the single one
+  // measured above: at one epsilon the spread between runs is wide enough to
+  // invert the ordering between two epsilons, so one draw can say anything.
+  if (estimates.exact && scenario.accuracyRuns > 0) {
+    try {
+      const r = await runIsolated('accuracy', scenario)
+      const errors = r.estimate
+        .split(',')
+        .map((e) => (Math.abs(Number(e) - estimates.exact) / estimates.exact) * 100)
+        .sort((a, b) => a - b)
+      const median = errors[Math.floor(errors.length / 2)]
+      console.log(`[observed err ] ${median.toFixed(2)}% median of ${errors.length} runs (range ${errors[0].toFixed(2)}-${errors[errors.length - 1].toFixed(2)}%)`)
+    } catch (e) {
+      console.error(`error running 'accuracy' for scenario '${scenario.name}':`, e instanceof Error ? e.message : e)
+    }
   }
 }
 
