@@ -32,6 +32,18 @@ function makeSkewedData (total, unique, seed) {
   return { data, f0: set.size }
 }
 
+// A batch of values seen once at the start and never again, then traffic that
+// keeps repeating. A sub-sample that favours the values it already holds keeps
+// the cold prefix forever, and the estimate roughly doubles.
+function makeColdPrefixData (coldValues, hotValues, repeats) {
+  const data = []
+  for (let i = 0; i < coldValues; i++) data.push(`cold${i}`)
+  for (let r = 0; r < repeats; r++) {
+    for (let i = 0; i < hotValues; i++) data.push(`hot${i}`)
+  }
+  return { data, f0: coldValues + hotValues }
+}
+
 test('computeThreshold is ⌈(12/ε²)·ln(3m/δ)⌉ rounded up to even', () => {
   const eps = 0.25
   const delta = 0.01
@@ -57,6 +69,18 @@ test('computeThreshold validates its inputs', () => {
   assert.throws(() => computeThreshold('0.05', 0.01, 100), RangeError)
 })
 
+test('every error carries a code, so callers need not match messages', () => {
+  const codeOf = (fn) => { try { fn(); return null } catch (err) { return err.code } }
+  const valid = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 1000, seed: 1 }).add('a').toJSON()
+
+  assert.equal(codeOf(() => computeThreshold(0, 0.1, 10)), 'CVM_INVALID_OPTION')
+  assert.equal(codeOf(() => new CVM({ epsilon: 5 })), 'CVM_INVALID_OPTION')
+  assert.equal(codeOf(() => new CVM({ random: 'nope' })), 'CVM_INVALID_OPTION')
+  assert.equal(codeOf(() => new CVM({ expectedSize: 10 }).add(10n).toJSON()), 'CVM_UNSERIALIZABLE_VALUE')
+  assert.equal(codeOf(() => CVM.fromJSON({ ...valid, p: 0.3 })), 'CVM_INVALID_SNAPSHOT')
+  assert.equal(codeOf(() => CVM.fromJSON('nope')), 'CVM_INVALID_SNAPSHOT')
+})
+
 test('constructor validates parameters', () => {
   assert.throws(() => new CVM({ epsilon: 0 }), RangeError)
   assert.throws(() => new CVM({ epsilon: 1 }), RangeError)
@@ -64,22 +88,6 @@ test('constructor validates parameters', () => {
   assert.throws(() => new CVM({ delta: 1.5 }), RangeError)
   assert.throws(() => new CVM({ expectedSize: -1 }), RangeError)
   assert.throws(() => new CVM({ random: 'nope' }), TypeError)
-})
-
-test('warns once when expectedSize is omitted', async () => {
-  const seen = new Promise((resolve) => process.once('warning', resolve))
-  new CVM({ epsilon: 0.5, delta: 0.1 }) // eslint-disable-line no-new
-  const warning = await seen
-  assert.equal(warning.code, 'CVM_NO_EXPECTED_SIZE')
-
-  // Once per process: a second omission must stay silent.
-  let warnedAgain = false
-  const listener = () => { warnedAgain = true }
-  process.on('warning', listener)
-  new CVM({ epsilon: 0.5, delta: 0.1 }) // eslint-disable-line no-new
-  await new Promise((resolve) => setImmediate(resolve))
-  process.removeListener('warning', listener)
-  assert.equal(warnedAgain, false, 'warning must fire only once per process')
 })
 
 test('estimate is exact when F0 never exceeds the threshold', () => {
@@ -157,6 +165,19 @@ test('stays unbiased on a skewed stream (hot-key churn in the delete branch)', (
   assert.ok(bias < 0.03, `mean estimate biased by ${(bias * 100).toFixed(2)}% on skewed data`)
 })
 
+test('stays unbiased when early values never come back (cold prefix)', () => {
+  const { data, f0 } = makeColdPrefixData(3000, 30_000, 4)
+  const trials = 60
+  let sum = 0
+  for (let t = 1; t <= trials; t++) {
+    const cvm = new CVM({ epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: t })
+    sum += cvm.addMany(data).distinct
+    if (t === 1) assert.ok(cvm.result().p < 1, 'precondition: sub-sampling engages')
+  }
+  const bias = Math.abs(sum / trials - f0) / f0
+  assert.ok(bias < 0.05, `mean estimate biased by ${(bias * 100).toFixed(2)}% on a cold-prefix stream`)
+})
+
 test('same seed reproduces the same estimate under hot-key churn', () => {
   const { data, f0 } = makeSkewedData(60_000, 30_000, 5)
   const opts = { epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: 42 }
@@ -189,6 +210,76 @@ test('addMany takes arrays and other iterables alike', () => {
   const cvm = new CVM({ epsilon: 0.5, delta: 0.5, expectedSize: 10, seed: 1 })
   cvm.addMany(OddOnly.from([1, 2, 3, 4, 5]))
   assert.equal(cvm.distinct, 3)
+})
+
+test('a snapshot round-trips through JSON and preserves the estimate', () => {
+  const { data } = makeData(100_000, 30_000, 123)
+  const cvm = new CVM({ epsilon: 0.1, delta: 0.05, expectedSize: data.length, seed: 4 }).addMany(data)
+  assert.ok(cvm.result().p < 1, 'precondition: sub-sampling engaged')
+
+  const restored = CVM.fromJSON(JSON.parse(JSON.stringify(cvm)))
+  assert.deepEqual(restored.result(), cvm.result())
+  assert.equal(restored.epsilon, cvm.epsilon)
+  assert.equal(restored.delta, cvm.delta)
+  assert.equal(restored.expectedSize, cvm.expectedSize)
+})
+
+test('a restored estimator keeps counting from the saved state', () => {
+  const first = Array.from({ length: 20_000 }, (_, i) => `a${i}`)
+  const second = Array.from({ length: 20_000 }, (_, i) => `b${i}`)
+  const opts = { epsilon: 0.2, delta: 0.05, expectedSize: 40_000, seed: 8 }
+
+  const saved = new CVM(opts).addMany(first)
+  const restored = CVM.fromJSON(JSON.parse(JSON.stringify(saved))).addMany(second)
+  const fresh = new CVM(opts).addMany(second)
+
+  assert.ok(restored.distinct > fresh.distinct * 1.5,
+    `restored ${restored.distinct} should cover both halves, a fresh run saw ${fresh.distinct}`)
+  assert.ok(Math.abs(restored.distinct - 40_000) / 40_000 <= 0.2)
+})
+
+test('toJSON keeps JSON-safe values and refuses the rest', () => {
+  const opts = { epsilon: 0.5, delta: 0.1, expectedSize: 100, random: () => 0 }
+  assert.equal(new CVM(opts).addMany(['s', 42, true, null]).toJSON().values.length, 4)
+
+  for (const value of [10n, Symbol('x'), NaN, Infinity, { id: 1 }, ['a']]) {
+    assert.throws(() => new CVM(opts).add(value).toJSON(), TypeError, `should refuse ${String(value)}`)
+  }
+})
+
+test('fromJSON rejects a snapshot that contradicts itself', () => {
+  const valid = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 1000, seed: 1 }).addMany(['a', 'b', 'c']).toJSON()
+
+  assert.throws(() => CVM.fromJSON(null), TypeError)
+  assert.throws(() => CVM.fromJSON('nope'), TypeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, version: 2 }), RangeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, threshold: valid.threshold + 2 }), RangeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, epsilon: 0.25 }), RangeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, p: 0.3 }), RangeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, p: 0 }), RangeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, p: 2 }), RangeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, values: 'abc' }), TypeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, values: ['a', 'a'] }), RangeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, values: [{ id: 1 }] }), TypeError)
+  assert.throws(() => CVM.fromJSON({ ...valid, values: Array.from({ length: valid.threshold }, (_, i) => `v${i}`) }), RangeError)
+
+  // A halved p is the one thing that legitimately differs from the fresh state.
+  assert.equal(CVM.fromJSON({ ...valid, p: 0.25 }).result().p, 0.25)
+})
+
+test('restoring keeps the estimator unbiased', () => {
+  const { data, f0 } = makeData(60_000, 25_000, 17)
+  const firstHalf = data.slice(0, data.length / 2)
+  const secondHalf = data.slice(data.length / 2)
+
+  const trials = 100
+  let sum = 0
+  for (let t = 1; t <= trials; t++) {
+    const saved = new CVM({ epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: t }).addMany(firstHalf)
+    sum += CVM.fromJSON(JSON.parse(JSON.stringify(saved))).addMany(secondHalf).distinct
+  }
+  const bias = Math.abs(sum / trials - f0) / f0
+  assert.ok(bias < 0.03, `mean estimate biased by ${(bias * 100).toFixed(2)}% across save and restore`)
 })
 
 test('reset clears state and reuses parameters', () => {

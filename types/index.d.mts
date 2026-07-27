@@ -1,7 +1,28 @@
 import { Readable, Writable } from 'node:stream'
 
-/** The primitive types, which a `Set` dedups by value rather than by reference. */
-type Primitive = string | number | bigint | boolean | symbol | null | undefined
+/**
+ * What a `keyFn` may return and what a snapshot may hold. A `Set` dedups these
+ * by value, and JSON gives them back comparing equal. `bigint` and `symbol`
+ * dedup too but cannot be saved; `undefined` would count every item that
+ * produced it as the same value.
+ */
+type CountableValue = string | number | boolean | null
+
+/**
+ * The `code` on the errors this library raises about its own use, so a caller
+ * can branch on it instead of matching messages. An aborted `signal` follows
+ * Node instead, with `code: 'ABORT_ERR'`, and errors from a source or a `keyFn`
+ * pass through untouched and keep their own.
+ */
+export type CVMErrorCode =
+  /** An option is out of range or of the wrong type. */
+  | 'CVM_INVALID_OPTION'
+  /** `estimateDistinct` was handed something it cannot iterate. */
+  | 'CVM_INVALID_SOURCE'
+  /** A snapshot given to `fromJSON` contradicts itself. */
+  | 'CVM_INVALID_SNAPSHOT'
+  /** A held value would not survive `toJSON` unchanged. */
+  | 'CVM_UNSERIALIZABLE_VALUE'
 
 /** Parameters shared by the core, the stream, and `estimateDistinct`. */
 export interface CVMOptions {
@@ -25,7 +46,7 @@ export interface CVMOptions {
   random?: () => number
 }
 
-/** Snapshot of the estimate and internal state. */
+/** The estimate and the state it came from. */
 export interface CVMResult {
   /** The estimated number of distinct values. */
   estimate: number
@@ -37,30 +58,55 @@ export interface CVMResult {
   p: number
 }
 
+/** Saved state of a `CVM`, as returned by {@link CVM.toJSON}. */
+export interface CVMSnapshot {
+  /** Format of this snapshot; only `1` is currently understood. */
+  version: 1
+  epsilon: number
+  delta: number
+  expectedSize: number
+  /** The maximum number of values the sample can hold. */
+  threshold: number
+  /** The sampling rate reached when the snapshot was taken. */
+  p: number
+  /** The sampled values themselves, fewer than `threshold` of them. */
+  values: CountableValue[]
+}
+
 export interface EstimateOptions extends CVMOptions {
   /**
-   * Maps each item to the value to count. Must return a primitive (typically a
-   * string or number): the engine dedups with a `Set`, so objects or arrays
-   * would be compared by reference and never dedup. Default: identity.
+   * Maps each item to the value to count: a string, number, boolean or `null`.
+   * The estimator dedups with a `Set`, so an object or array would be compared
+   * by reference and never dedup. A field that may be missing has to be given a
+   * value of your choosing first, since `undefined` would count every item
+   * lacking it as one and the same. Default: identity.
    */
-  keyFn?: (item: any) => Primitive
+  keyFn?: (item: any) => CountableValue
+  /**
+   * Stops the count: the promise rejects with an `AbortError` that has
+   * `code: 'ABORT_ERR'`, and the signal's own reason as its `cause`. An array or
+   * other synchronous source can only be stopped before it starts, since nothing
+   * else runs until the loop finishes. You lose the partial estimate; the stream
+   * API keeps it.
+   */
+  signal?: AbortSignal
 }
 
 export interface DistinctEstimateStreamOptions extends CVMOptions {
   /**
-   * Maps each chunk to the value to count. Must return a primitive (typically a
-   * string or number): the engine dedups with a `Set`, so objects or arrays
-   * would be compared by reference and never dedup. Default: identity.
+   * Maps each chunk to the value to count: a string, number, boolean or `null`.
+   * The estimator dedups with a `Set`, so an object or array would be compared
+   * by reference and never dedup. A field that may be missing has to be given a
+   * value of your choosing first, since `undefined` would count every chunk
+   * lacking it as one and the same. Default: identity.
    */
-  keyFn?: (chunk: any) => Primitive
+  keyFn?: (chunk: any) => CountableValue
   /**
-   * Treats each write as one opaque value when `true` (the default, accepts
-   * any type), or as bytes when `false`: a string, `Buffer`, `TypedArray`, or
-   * `DataView` (anything else throws). In `false` mode, Node converts every
-   * chunk to a `Buffer` before it arrives here, so the default `keyFn` won't
-   * dedup matching content: provide a `keyFn` that calls `.toString()` on the
-   * chunk. Either way, a raw byte stream still needs to be framed into values
-   * upstream (e.g. by a line-splitting transform) before reaching this stream.
+   * Treats each write as one opaque value when `true` (the default, accepts any
+   * type), or as bytes when `false`: a string, `Buffer`, `TypedArray` or
+   * `DataView`, anything else throws. In `false` mode every chunk arrives as a
+   * `Buffer`, which the default `keyFn` cannot dedup, so pass one that calls
+   * `.toString()` on it.
    */
   objectMode?: boolean
   /**
@@ -69,13 +115,20 @@ export interface DistinctEstimateStreamOptions extends CVMOptions {
    * omitted, Node's own default for that mode applies.
    */
   highWaterMark?: number
+  /**
+   * Stops the count: the stream emits an `AbortError` that has
+   * `code: 'ABORT_ERR'`, which also rejects `pipeline()`. Whatever was counted
+   * before the stop stays readable through {@link DistinctEstimateStream.result}.
+   */
+  signal?: AbortSignal
 }
 
 /**
  * Total, unbiased CVM distinct-values (F0) estimator (Karayel et al., ITP 2025,
  * Algorithm 3; building on arXiv:2301.10191). Never fails, and `E[estimate]` is
  * exactly the true distinct count. Feed values with {@link CVM.add} and read
- * {@link CVM.result}. Values must be usable as `Set` members.
+ * {@link CVM.result}. Values are deduped by `Set` equality, so an object counts
+ * by reference.
  */
 export class CVM {
   constructor(options?: CVMOptions)
@@ -92,6 +145,18 @@ export class CVM {
   /** How many values are held. */
   get sampleCount(): number
   result(): CVMResult
+  /**
+   * The state to save, also used by `JSON.stringify`. Every held value must be a
+   * string, a finite number, a boolean or `null`; `TypeError` otherwise.
+   */
+  toJSON(): CVMSnapshot
+  /**
+   * Rebuild an estimator from {@link CVM.toJSON}, ready to keep counting. The
+   * snapshot carries the parameters, so it is the only argument. Counting
+   * resumes with fresh randomness: a `seed` used before the snapshot does not
+   * carry across it. Throws if the snapshot contradicts itself.
+   */
+  static fromJSON(snapshot: CVMSnapshot): CVM
   /** Clear samples and restart from `p = 1`, keeping parameters and RNG. */
   reset(): this
 }
@@ -121,7 +186,8 @@ export function estimateDistinct(
 
 /**
  * The maximum number of values that can be held: `⌈(12/ε²)·ln(3m/δ)⌉`, rounded
- * up to an even number. Throws `RangeError` when a parameter is out of range.
+ * up to an even number. Throws `RangeError` on a parameter that is out of range
+ * or not a number.
  */
 export function computeThreshold(epsilon: number, delta: number, expectedSize: number): number
 

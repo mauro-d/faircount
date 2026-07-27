@@ -30,6 +30,8 @@ estimate's expected value is exactly the true count.
 - [Counting by a key (`keyFn`)](#counting-by-a-key-keyfn)
 - [Options](#options)
 - [Result](#result)
+- [Reproducible randomness](#reproducible-randomness)
+- [Saving and resuming](#saving-and-resuming)
 - [Errors](#errors)
 - [Key concepts](#key-concepts)
 - [Benchmarks](#benchmarks)
@@ -78,11 +80,11 @@ await pipeline(values, counter) // values: your source stream
 console.log(counter.result()) // { estimate, samples, threshold, p }
 ```
 
-In the default object mode, each write is one value of any type, taken as-is.
+In the default object mode, each write is one value, taken as-is and of any type
+Node lets you write (everything but `null`, which ends a stream).
 If your source is a byte stream of raw strings or Buffers, set
-`objectMode: false` to feed it directly. Node then delivers each write as a
-Buffer, and two Buffers with the same bytes are different objects, so duplicates
-go undetected unless you decode them in `keyFn`:
+`objectMode: false` to feed it directly. Each write then arrives as a Buffer,
+which won't dedup against an identical one, so decode it in `keyFn`:
 
 ```js
 new DistinctEstimateStream({ objectMode: false, keyFn: (chunk) => chunk.toString() })
@@ -90,7 +92,7 @@ new DistinctEstimateStream({ objectMode: false, keyFn: (chunk) => chunk.toString
 
 ## Core engine — `CVM`
 
-Drive the algorithm yourself, no I/O:
+Drive the algorithm yourself. The core does no I/O:
 
 ```js
 import { CVM } from 'faircount'
@@ -115,8 +117,15 @@ There's no `keyFn` here: pass `add()` whatever value you want counted.
 Your source doesn't have to emit plain values directly. When it emits objects,
 both `estimateDistinct` and `DistinctEstimateStream` accept a `keyFn` that maps
 each item to the value whose distinctness you actually want to count. It must
-return a **primitive** (typically a string or number): the engine dedups with a
-`Set`, so objects/arrays would be compared by reference and never dedup.
+return a **string, number, boolean or `null`**: the engine dedups with a `Set`,
+so objects and arrays would be compared by reference and never dedup, and those
+four are also the values a snapshot can carry.
+
+Watch out for fields that may be missing. `keyFn: (o) => o.user` returns
+`undefined` for every record without a user, and the estimator counts all of
+them as a single distinct value, with nothing to warn you. Give those records a
+value instead: `o.user ?? 'anonymous'` groups them together, `o.user ?? o.id`
+keeps them apart.
 
 ```js
 // distinct users
@@ -127,11 +136,10 @@ await estimateDistinct(orders, { keyFn: (o) => makeYourKey(o.user, o.product) })
 ```
 
 You write `makeYourKey` yourself: combine whatever fields define distinctness
-for your data (two, three, or more) into one primitive that never collides for
-two genuinely different inputs. Naive concatenation and `JSON.stringify` both
-have sharp edges (e.g. in a JSON array `null`, `undefined`, and `NaN` all
-serialize to `null`). Test your own encoding against your actual data; don't
-assume a known trick is automatically safe.
+for your data into one value that never collides for two genuinely different
+inputs. Naive concatenation and `JSON.stringify` both have sharp edges (e.g. in
+a JSON array `null`, `undefined`, and `NaN` all serialize to `null`), so test
+your encoding against your actual data.
 
 ## Options
 
@@ -143,6 +151,7 @@ assume a known trick is automatically safe.
 | `seed` | — | Integer seed for the built-in generator; set it for reproducible runs. Leave unset for fresh randomness each run. |
 | `random` | `Math.random` | The randomness source: a function returning a float in `[0, 1)`. Overrides `seed`. |
 | `keyFn` | identity | (Promise & Stream APIs) Maps each item to the value to count. |
+| `signal` | — | (Promise & Stream APIs) An `AbortSignal` that stops the count. See [Errors](#errors). |
 
 ## Result
 
@@ -159,10 +168,24 @@ If the stream has fewer distinct values than `threshold`, nothing is ever droppe
 and the result is exact. Otherwise it's an estimate: randomness inside the
 algorithm makes it vary slightly between runs, unless you set a `seed`.
 
-**Reproducible randomness.** `createRandom` is the generator factory behind
-`seed`, exported separately so you can use the same kind of generator yourself:
-pass a seed for a deterministic `[0, 1)` sequence, or call it with no arguments
-to get `Math.random` itself.
+## Reproducible randomness
+
+By default the estimator draws fresh randomness on each run, so repeated runs
+over the same input give slightly different estimates, spread around the true
+count. Set a `seed` when you want a run to be repeatable instead: the same seed,
+the same parameters and the same values in the same order always produce the
+same estimate. The trade-off is that the `(ε, δ)` guarantee describes the odds
+of a fresh draw, while a seeded run repeats one fixed draw. Repeating it returns
+the same error instead of averaging it out.
+
+That determinism ends at a snapshot. An estimator rebuilt with `fromJSON`
+resumes with fresh randomness whether or not the original was seeded, so a
+resumed count is not a replay of the one you saved (see
+[Saving and resuming](#saving-and-resuming)).
+
+`createRandom` is the generator factory behind `seed`, exported separately so
+you can use the same kind of generator yourself: pass a seed for a deterministic
+`[0, 1)` sequence, or call it with no arguments to get `Math.random` itself.
 
 ```js
 import { createRandom } from 'faircount'
@@ -174,20 +197,80 @@ a() === b() // true: same seed, same sequence
 createRandom() === Math.random // true: no seed, the real thing
 ```
 
-A seeded run is deterministic: with the same seed and the same data, every run
-returns the same estimate. Keep the trade-off in mind: the `(ε, δ)` guarantee
-describes the odds of a fresh draw, while a seeded run repeats one fixed draw.
-Repeating it returns the same error instead of averaging it out.
+## Saving and resuming
+
+A `CVM` can hand over its state as a plain object and be rebuilt from it later,
+so a long count survives a restart:
+
+```js
+import { writeFile, readFile } from 'node:fs/promises'
+import { CVM } from 'faircount'
+
+const cvm = new CVM({ epsilon: 0.05, expectedSize: 1_000_000 })
+cvm.addMany(todaysBatch)
+await writeFile('checkpoint.json', JSON.stringify(cvm)) // calls cvm.toJSON()
+
+// later, in another process
+const resumed = CVM.fromJSON(JSON.parse(await readFile('checkpoint.json', 'utf8')))
+resumed.addMany(tomorrowsBatch)
+console.log(resumed.result())
+```
+
+The snapshot carries the parameters along with the sampled values, so `fromJSON`
+takes nothing else. Its size is bounded by `threshold`, the same bound that keeps
+memory flat, and `fromJSON` rejects a snapshot whose parts don't agree. This is a
+core-engine feature: the promise and stream APIs count from start to finish in
+one go.
+
+Three things to know:
+
+- Values have to come back from JSON unchanged, or a value arriving after the
+  restore would no longer match its own earlier copy. `toJSON()` accepts
+  strings, finite numbers, booleans and `null`, and throws on anything else
+  (`bigint`, `symbol`, `NaN`, objects).
+- Counting resumes with fresh randomness. A `seed` set before the snapshot does
+  not carry across it: the estimate stays unbiased and within the same bounds,
+  but a resumed run is not a replay of the original.
+- `expectedSize` covers the whole count, not one session. It sized the threshold
+  when the estimator was first created, so if the resumed run takes the total
+  past it, the run lands outside `±epsilon` more often than `delta` allows,
+  roughly in proportion to how far past. Give it the total you expect across all
+  sessions.
 
 ## Errors
 
-The algorithm never fails (it is total). Invalid options throw a `RangeError` or a
-`TypeError` as soon as the estimator is created (in the Promise API the returned
-promise rejects instead). Past that point, errors only come from your data source
-or your `keyFn`, and travel on a single channel:
+The algorithm never fails (it is total), so counting itself never throws.
+Invalid options throw a `RangeError` or a `TypeError` when the estimator is
+created (in the Promise API the returned promise rejects instead), and so do
+`toJSON` on a value JSON would alter and `fromJSON` on a snapshot whose parts
+don't agree. Each of those carries a `code`, so you can branch on it rather than
+on the message:
+
+| `code` | Raised when |
+| --- | --- |
+| `CVM_INVALID_OPTION` | an option is out of range or of the wrong type |
+| `CVM_INVALID_SOURCE` | `estimateDistinct` got something it cannot iterate |
+| `CVM_INVALID_SNAPSHOT` | a snapshot given to `fromJSON` contradicts itself |
+| `CVM_UNSERIALIZABLE_VALUE` | `toJSON` holds a value JSON would alter |
+
+While counting, errors only come from your data source or your `keyFn`, and
+travel on a single channel:
 
 - **Promise API** — the promise rejects.
 - **Stream API** — the `'error'` event fires, which also rejects `pipeline()` / `finished()`.
+
+**Cancelling.** Both APIs take a `signal`, and fail on abort the way the rest of
+Node does: an `AbortError` with `code: 'ABORT_ERR'`, and the signal's own reason
+as its `cause`.
+
+```js
+await estimateDistinct(pages, { expectedSize: 1_000_000, signal: AbortSignal.timeout(50) })
+```
+
+An array or any other synchronous source can only be stopped before it starts,
+because nothing else runs until the loop finishes. And a cancelled promise loses
+the partial count, while the stream API keeps it: `counter.result()` still
+reports what was counted before the stop.
 
 ## Key concepts
 

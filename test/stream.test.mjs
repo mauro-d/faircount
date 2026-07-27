@@ -74,8 +74,7 @@ test('objectMode: false delivers Buffers, so the default keyFn cannot dedup them
     epsilon: 0.5, delta: 0.1, expectedSize: 100, seed: 1, objectMode: false
   })
   await pipeline(Readable.from(lines, { objectMode: false }), undecoded)
-  // Node converts each string to a Buffer before _write sees it; identical
-  // content becomes different Buffer objects, so identity keyFn can't dedup.
+  // Node converts each string to a Buffer before _write sees it.
   assert.equal(undecoded.result().estimate, 4)
 
   const decoded = new DistinctEstimateStream({
@@ -93,6 +92,18 @@ test('objectMode: false delivers Buffers, so the default keyFn cannot dedup them
 test('objectMode: false rejects a chunk that is not a string, Buffer, TypedArray, or DataView', () => {
   const counter = new DistinctEstimateStream({ epsilon: 0.5, expectedSize: 100, objectMode: false })
   assert.throws(() => counter.write(42), TypeError)
+})
+
+test('passes Writable options through, so an AbortSignal still aborts', async () => {
+  // Options the sink doesn't read itself go to `Writable` rather than being
+  // dropped: picking out a couple by name would silently ignore the others.
+  const controller = new AbortController()
+  const counter = new DistinctEstimateStream({ expectedSize: 100, signal: controller.signal })
+  const failed = new Promise((resolve) => counter.on('error', resolve))
+
+  counter.write('a')
+  controller.abort()
+  assert.equal((await failed).code, 'ABORT_ERR')
 })
 
 test('propagates a keyFn error exactly once (no double reporting)', async () => {

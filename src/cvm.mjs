@@ -2,8 +2,26 @@ import { createRandom } from './random.mjs'
 
 const DEFAULT_EPSILON = 0.05
 const DEFAULT_DELTA = 0.01
+const SNAPSHOT_VERSION = 1
 
 let warnedNoExpectedSize = false
+
+// Errors carry a `code` so callers can branch on it instead of matching message
+// text. The helper drops itself from the stack trace.
+export function fail (Type, code, message) {
+  const error = new Type(message)
+  error.code = code
+  Error.captureStackTrace(error, fail)
+  return error
+}
+
+// A restored value has to compare equal to the same value arriving later, or the
+// sample would count it twice.
+function isRestorable (value) {
+  const type = typeof value
+  return type === 'string' || type === 'boolean' || value === null ||
+    (type === 'number' && Number.isFinite(value))
+}
 
 // Sample-set capacity for the total/unbiased CVM variant (Karayel, Watt, Khu,
 // Meel & Tan, ITP 2025, Algorithm 3): ⌈(12/ε²)·ln(3m/δ)⌉, rounded up to an even
@@ -11,13 +29,13 @@ let warnedNoExpectedSize = false
 // m is only logarithmic, so a rough upper bound is fine.
 export function computeThreshold (epsilon, delta, expectedSize) {
   if (typeof epsilon !== 'number' || !(epsilon > 0 && epsilon < 1)) {
-    throw new RangeError(`epsilon must be a number in (0, 1), got ${epsilon}`)
+    throw fail(RangeError, 'CVM_INVALID_OPTION', `epsilon must be a number in (0, 1), got ${epsilon}`)
   }
   if (typeof delta !== 'number' || !(delta > 0 && delta < 1)) {
-    throw new RangeError(`delta must be a number in (0, 1), got ${delta}`)
+    throw fail(RangeError, 'CVM_INVALID_OPTION', `delta must be a number in (0, 1), got ${delta}`)
   }
   if (typeof expectedSize !== 'number' || !Number.isFinite(expectedSize) || expectedSize < 0) {
-    throw new RangeError(`expectedSize must be a non-negative finite number, got ${expectedSize}`)
+    throw fail(RangeError, 'CVM_INVALID_OPTION', `expectedSize must be a non-negative finite number, got ${expectedSize}`)
   }
   const m = expectedSize > 0 ? expectedSize : 1
   const n = Math.ceil((12 / (epsilon * epsilon)) * Math.log((3 * m) / delta))
@@ -25,9 +43,10 @@ export function computeThreshold (epsilon, delta, expectedSize) {
 }
 
 // Core engine: the total, unbiased CVM variant (Karayel et al., ITP 2025,
-// Algorithm 3; building on the CVM algorithm, arXiv:2301.10191). Sub-sampling keeps a
-// uniformly random half of the buffer instead of an independent ½-coin per
-// element, which makes it total (never fails) and unbiased (E[estimate] = F0).
+// Algorithm 3; building on the CVM algorithm, arXiv:2301.10191). Sub-sampling
+// keeps a uniformly random half of the buffer instead of an independent ½-coin
+// per element, so the buffer always shrinks and the original's give-up path
+// disappears. With no failed run to condition on, E[estimate] = F0 exactly.
 // Feed values with add(), read result(); values must be Set-comparable.
 export class CVM {
   constructor (options = {}) {
@@ -40,7 +59,7 @@ export class CVM {
     } = options
 
     if (random !== undefined && typeof random !== 'function') {
-      throw new TypeError('random must be a function returning a float in [0, 1)')
+      throw fail(TypeError, 'CVM_INVALID_OPTION', 'random must be a function returning a float in [0, 1)')
     }
 
     // computeThreshold validates epsilon, delta and expectedSize, so an invalid
@@ -84,10 +103,9 @@ export class CVM {
     return this
   }
 
-  // V8 keeps deleted entries in the Set's internal chains until the table is
-  // rebuilt, so hot-key churn on skewed streams degrades lookups. Copying the
-  // Set compacts it without touching membership, order, or randomness (same
-  // seed, same estimate); holes >= max(|X|, 1024) keeps the copy amortized O(1).
+  // Deleted entries stay in the Set's chains until it is rebuilt, so churn on
+  // hot keys slows every lookup down. Rebuilding it here leaves membership,
+  // order and randomness untouched, and averages out to nothing per delete.
   _maybeCompact () {
     this._holes++
     if (this._holes >= this._X.size && this._holes >= 1024) {
@@ -116,9 +134,8 @@ export class CVM {
     this._holes = 0
   }
 
-  // Plain arrays skip the iterator protocol: measured clearly faster in the
-  // exact regime, never slower beyond run noise elsewhere. The iterator identity
-  // check keeps subclasses with a custom iterator on the generic path.
+  // Fast path for plain arrays: an indexed loop skips the iterator protocol. The
+  // identity check keeps subclasses with a custom iterator on the generic path.
   addMany (elements) {
     if (Array.isArray(elements) && elements[Symbol.iterator] === Array.prototype[Symbol.iterator]) {
       for (let i = 0; i < elements.length; i++) this.add(elements[i])
@@ -143,6 +160,70 @@ export class CVM {
       threshold: this.threshold,
       p: this._p
     }
+  }
+
+  // State as a plain object, ready for JSON.stringify (which calls this method
+  // on its own). Its size is bounded by the threshold, like memory.
+  toJSON () {
+    const values = [...this._X]
+    for (let i = 0; i < values.length; i++) {
+      if (!isRestorable(values[i])) {
+        throw fail(TypeError, 'CVM_UNSERIALIZABLE_VALUE', `values must be a string, a finite number, a boolean or null to be saved, got ${String(values[i])}`)
+      }
+    }
+    return {
+      version: SNAPSHOT_VERSION,
+      epsilon: this.epsilon,
+      delta: this.delta,
+      expectedSize: this.expectedSize,
+      threshold: this.threshold,
+      p: this._p,
+      values
+    }
+  }
+
+  // Rebuild an estimator from toJSON(). The snapshot holds the parameters, so it
+  // is the only argument; counting resumes with fresh randomness, since the
+  // generator's position is not part of the state.
+  static fromJSON (snapshot) {
+    if (snapshot === null || typeof snapshot !== 'object') {
+      throw fail(TypeError, 'CVM_INVALID_SNAPSHOT', `snapshot must be an object, got ${snapshot}`)
+    }
+    if (snapshot.version !== SNAPSHOT_VERSION) {
+      throw fail(RangeError, 'CVM_INVALID_SNAPSHOT', `snapshot version must be ${SNAPSHOT_VERSION}, got ${snapshot.version}`)
+    }
+
+    const { epsilon, delta, expectedSize, threshold, p, values } = snapshot
+    // The constructor validates the parameters and recomputes the threshold, so a
+    // mismatch means the snapshot no longer describes the state it carries.
+    const cvm = new CVM({ epsilon, delta, expectedSize })
+    if (threshold !== cvm.threshold) {
+      throw fail(RangeError, 'CVM_INVALID_SNAPSHOT', `snapshot threshold is ${threshold}, but its parameters give ${cvm.threshold}`)
+    }
+    if (!(p > 0 && p <= 1) || 2 ** Math.round(Math.log2(p)) !== p) {
+      throw fail(RangeError, 'CVM_INVALID_SNAPSHOT', `snapshot p must be a power of two in (0, 1], got ${p}`)
+    }
+    if (!Array.isArray(values)) {
+      throw fail(TypeError, 'CVM_INVALID_SNAPSHOT', `snapshot values must be an array, got ${values}`)
+    }
+    // add() sub-samples as soon as the sample fills up, so a saved state is
+    // always below the threshold.
+    if (values.length >= threshold) {
+      throw fail(RangeError, 'CVM_INVALID_SNAPSHOT', `snapshot holds ${values.length} values, at or above its threshold ${threshold}`)
+    }
+    for (let i = 0; i < values.length; i++) {
+      if (!isRestorable(values[i])) {
+        throw fail(TypeError, 'CVM_INVALID_SNAPSHOT', `snapshot values must be strings, finite numbers, booleans or null, got ${String(values[i])}`)
+      }
+    }
+    const restored = new Set(values)
+    if (restored.size !== values.length) {
+      throw fail(RangeError, 'CVM_INVALID_SNAPSHOT', 'snapshot values contain duplicates')
+    }
+
+    cvm._X = restored
+    cvm._p = p
+    return cvm
   }
 
   reset () {
