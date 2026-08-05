@@ -154,6 +154,19 @@ test('keeps the buffer within the threshold (memory bound)', () => {
   assert.ok(cvm.result().p < 1, 'sub-sampling should have engaged')
 })
 
+test('the parameters cannot be assigned, so the memory bound cannot be lifted', () => {
+  // `_keep` is fixed at construction. A writable `threshold` would let the
+  // buffer grow past it and, worse, leave the sub-sample keeping the old count
+  // while `p` still halves, which is where unbiasedness comes from.
+  const cvm = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 100 })
+  for (const field of ['threshold', 'epsilon', 'delta', 'expectedSize']) {
+    assert.throws(() => { cvm[field] = 999_999 }, TypeError, `${field} accepted an assignment`)
+  }
+
+  for (let i = 0; i < 5000; i++) cvm.add(`v${i}`)
+  assert.ok(cvm.sampleCount <= cvm.threshold, `samples ${cvm.sampleCount} exceeded threshold ${cvm.threshold}`)
+})
+
 test('stays unbiased on a skewed stream (hot-key churn in the delete branch)', () => {
   const { data, f0 } = makeSkewedData(60_000, 30_000, 5)
   const trials = 150

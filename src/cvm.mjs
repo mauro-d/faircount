@@ -49,6 +49,15 @@ export function computeThreshold (epsilon, delta, expectedSize) {
 // disappears. With no failed run to condition on, E[estimate] = F0 exactly.
 // Feed values with add(), read result(); values must be Set-comparable.
 export class CVM {
+  // Private with a getter each, so `readonly` in the types is true. Assigning
+  // `threshold` from outside would leave `_keep` on the old value: the
+  // sub-sample would stop retaining half while `p` still halves, and with it
+  // goes unbiasedness.
+  #epsilon
+  #delta
+  #expectedSize
+  #threshold
+
   constructor (options = {}) {
     const {
       epsilon = DEFAULT_EPSILON,
@@ -64,7 +73,7 @@ export class CVM {
 
     // computeThreshold validates epsilon, delta and expectedSize, so an invalid
     // parameter throws here, before the warning below can fire.
-    this.threshold = computeThreshold(epsilon, delta, expectedSize)
+    this.#threshold = computeThreshold(epsilon, delta, expectedSize)
 
     // Optional, but omitting it sizes the threshold for a length-1 stream, which is
     // too small for the (ε, δ) guarantee on a real one. Warn once instead of failing.
@@ -76,11 +85,11 @@ export class CVM {
       )
     }
 
-    this.epsilon = epsilon
-    this.delta = delta
-    this.expectedSize = expectedSize
+    this.#epsilon = epsilon
+    this.#delta = delta
+    this.#expectedSize = expectedSize
 
-    this._keep = this.threshold / 2
+    this._keep = this.#threshold / 2
     this._random = random ?? createRandom(seed)
     this._X = new Set()
     this._p = 1
@@ -93,7 +102,7 @@ export class CVM {
     if (this._random() < this._p) {
       const X = this._X
       X.add(element)
-      if (X.size === this.threshold) {
+      if (X.size === this.#threshold) {
         this._subsample()
         this._p /= 2
       }
@@ -145,6 +154,22 @@ export class CVM {
     return this
   }
 
+  get epsilon () {
+    return this.#epsilon
+  }
+
+  get delta () {
+    return this.#delta
+  }
+
+  get expectedSize () {
+    return this.#expectedSize
+  }
+
+  get threshold () {
+    return this.#threshold
+  }
+
   get distinct () {
     return this._X.size / this._p
   }
@@ -157,7 +182,7 @@ export class CVM {
     return {
       estimate: this._X.size / this._p,
       samples: this._X.size,
-      threshold: this.threshold,
+      threshold: this.#threshold,
       p: this._p
     }
   }
@@ -173,10 +198,10 @@ export class CVM {
     }
     return {
       version: SNAPSHOT_VERSION,
-      epsilon: this.epsilon,
-      delta: this.delta,
-      expectedSize: this.expectedSize,
-      threshold: this.threshold,
+      epsilon: this.#epsilon,
+      delta: this.#delta,
+      expectedSize: this.#expectedSize,
+      threshold: this.#threshold,
       p: this._p,
       values
     }
