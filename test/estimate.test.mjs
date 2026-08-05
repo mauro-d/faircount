@@ -14,6 +14,15 @@ test('estimateDistinctSync accepts a non-array iterable (Set)', () => {
   assert.equal(estimateDistinctSync(small(), new Set(VALUES)).estimate, 4)
 })
 
+test('an array with its own iterator is iterated, not indexed', () => {
+  // The fast path indexes the array directly, so it only applies while the
+  // iterator is the stock one. A replaced iterator has to win.
+  const values = ['a', 'b', 'c', 'd']
+  values[Symbol.iterator] = function * () { yield 'x'; yield 'x'; yield 'y' }
+
+  assert.equal(estimateDistinctSync(small(), values).estimate, 2)
+})
+
 test('estimateDistinct accepts an async iterable', async () => {
   async function * gen () {
     for (const v of VALUES) yield v
@@ -101,6 +110,67 @@ test('a signal stops an async source and rejects like the rest of Node', async (
   assert.equal(err.code, 'ABORT_ERR')
   assert.equal(err.cause.name, 'TimeoutError', 'the signal reason is kept as cause')
   assert.ok(estimator.result().estimate > 0, 'the partial count stays in the estimator')
+})
+
+test('a signal stops a source that is waiting, not just one that is delivering', async () => {
+  // The check has to race `next()`: a source suspended on an await is the one
+  // case anyone aborts, and it is the case a per-value check never sees.
+  async function * stalls () {
+    yield 'a'
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    yield 'b'
+  }
+
+  const estimator = small()
+  const started = Date.now()
+  const err = await estimateDistinct(estimator, stalls(), { signal: AbortSignal.timeout(50) }).catch((e) => e)
+  const elapsed = Date.now() - started
+
+  assert.equal(err.code, 'ABORT_ERR')
+  assert.ok(elapsed < 1000, `abort took ${elapsed}ms, so it waited for the source instead of the signal`)
+  assert.equal(estimator.sampleCount, 1, 'the value delivered before the stall was counted')
+})
+
+test('no value is counted after the signal has fired', async () => {
+  // Aborting from inside keyFn fires the signal while a value is being handled,
+  // between two reads of the source. The next one must not be counted.
+  const controller = new AbortController()
+  async function * three () { yield 'a'; yield 'b'; yield 'c' }
+
+  const estimator = small()
+  const err = await estimateDistinct(estimator, three(), {
+    signal: controller.signal,
+    keyFn: (value) => { controller.abort(); return value }
+  }).catch((e) => e)
+
+  assert.equal(err.code, 'ABORT_ERR')
+  assert.equal(estimator.sampleCount, 1, 'only the value in flight when the signal fired')
+})
+
+test('a source that misbehaves on close cannot spoil the abort', async () => {
+  // One value, then a `next()` that never settles, so the signal always wins the
+  // race and the close path always runs. A missing `return` and a failing one
+  // must both leave the caller with the abort: a rejection escaping here would
+  // fail this run as an unhandled rejection.
+  const stalling = (close) => ({
+    [Symbol.asyncIterator] () {
+      let sent = 0
+      const iterator = {
+        next: async () => (sent++ === 0 ? { value: 'a', done: false } : new Promise(() => {}))
+      }
+      if (close) iterator.return = close
+      return iterator
+    }
+  })
+
+  for (const close of [undefined, () => undefined, async () => { throw new Error('close boom') }]) {
+    const estimator = small()
+    const err = await estimateDistinct(estimator, stalling(close), {
+      signal: AbortSignal.timeout(20)
+    }).catch((e) => e)
+    assert.equal(err.code, 'ABORT_ERR')
+    assert.equal(estimator.sampleCount, 1)
+  }
 })
 
 test('a signal already aborted stops before the first value', async () => {

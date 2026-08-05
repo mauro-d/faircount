@@ -16,6 +16,19 @@ function abortError (signal) {
   return error
 }
 
+const ABORTED = Symbol('aborted')
+
+// Resolves instead of rejecting, so a signal that fires after the loop is over
+// leaves no unhandled rejection behind. One listener for the whole run.
+function watchAbort (signal) {
+  let onAbort
+  const fired = new Promise((resolve) => {
+    onAbort = () => resolve(ABORTED)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  return { fired, release: () => signal.removeEventListener('abort', onAbort) }
+}
+
 function checkArguments (estimator, keyFn) {
   if (!(estimator instanceof CVM)) {
     throw fail(TypeError, 'CVM_INVALID_OPTION', 'estimator must be a CVM instance')
@@ -68,9 +81,31 @@ export async function estimateDistinct (estimator, source, options = {}) {
 
   if (signal?.aborted) throw abortError(signal)
 
-  for await (const item of source) {
-    if (signal?.aborted) throw abortError(signal)
-    estimator.add(keyFn(item))
+  // Driven by hand rather than with `for await` so each `next()` can be raced
+  // against the signal. Testing `aborted` between values only looks at it while
+  // the source is delivering, never while it is waiting, which is the one moment
+  // anyone aborts.
+  const iterator = source[Symbol.asyncIterator]()
+  const watch = signal ? watchAbort(signal) : null
+  let exhausted = false
+  try {
+    for (;;) {
+      if (signal?.aborted) throw abortError(signal)
+      const step = watch ? await Promise.race([iterator.next(), watch.fired]) : await iterator.next()
+      if (step === ABORTED) throw abortError(signal)
+      if (step.done) {
+        exhausted = true
+        break
+      }
+      estimator.add(keyFn(step.value))
+    }
+  } finally {
+    watch?.release()
+    // Asks the source to close so its own cleanup runs, without waiting for it:
+    // `return()` queues behind the `next()` still in flight, so awaiting it
+    // would hand back the delay the abort just avoided. The caller is released
+    // now, the source finishes closing when its pending step settles.
+    if (!exhausted) iterator.return?.()?.catch(() => { /* the error on its way out is the one that matters */ })
   }
 
   return estimator.result()
