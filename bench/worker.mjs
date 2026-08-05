@@ -1,5 +1,5 @@
 import { pipeline } from 'node:stream/promises'
-import { CVM, DistinctEstimateStream } from '../src/index.mjs'
+import { CVM, createEstimatorSink } from '../src/index.mjs'
 import { createTokenSource, createTokenStream } from './sources.mjs'
 import { ExactDistinctStream } from './baseline.mjs'
 
@@ -62,9 +62,10 @@ async function run () {
   // the benchmark shows a freshly-drawn estimate each run rather than a single
   // repeated deterministic draw. The scenario's seed only fixes the synthetic
   // workload, so it is comparable across the exact and cvm runs.
-  const sink = kind === 'cvm'
-    ? new DistinctEstimateStream({ epsilon: scenario.epsilon, delta: scenario.delta, expectedSize: scenario.total })
-    : new ExactDistinctStream()
+  const estimator = kind === 'cvm'
+    ? new CVM({ epsilon: scenario.epsilon, delta: scenario.delta, expectedSize: scenario.total })
+    : null
+  const sink = estimator ? createEstimatorSink(estimator) : new ExactDistinctStream()
 
   const memBefore = process.memoryUsage().heapUsed
   const start = performance.now()
@@ -73,7 +74,7 @@ async function run () {
 
   if (global.gc) global.gc()
   const ramMB = (process.memoryUsage().heapUsed - memBefore) / 1024 / 1024
-  const estimate = sink.distinct
+  const estimate = (estimator ?? sink).distinct
   console.log(`RESULT|${kind}|${estimate.toFixed(0)}|${ramMB.toFixed(2)}|${ms.toFixed(0)}`)
 }
 

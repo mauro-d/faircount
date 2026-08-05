@@ -2,29 +2,26 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { DistinctEstimateStream } from '../src/index.mjs'
+import { CVM, createEstimatorSink } from '../src/index.mjs'
+
+const small = () => new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 100, seed: 1 })
 
 test('counts distinct values piped through it (exact for small input)', async () => {
   const values = ['a', 'b', 'a', 'c', 'b', 'a']
-  const counter = new DistinctEstimateStream({ epsilon: 0.5, delta: 0.1, expectedSize: 100, seed: 1 })
-  await pipeline(Readable.from(values), counter)
-  assert.equal(counter.result().estimate, 3)
-  assert.equal(counter.distinct, 3)
+  const estimator = small()
+  const sink = createEstimatorSink(estimator)
+  await pipeline(Readable.from(values), sink)
+  assert.equal(estimator.result().estimate, 3)
+  assert.equal(sink.estimator, estimator, 'the sink hands back the estimator it was given')
 })
 
 test('keyFn maps objects to their distinct key', async () => {
   const orders = [
     { user: 'u1' }, { user: 'u2' }, { user: 'u1' }, { user: 'u3' }
   ]
-  const counter = new DistinctEstimateStream({
-    epsilon: 0.5,
-    delta: 0.1,
-    expectedSize: 100,
-    seed: 1,
-    keyFn: (o) => o.user
-  })
-  await pipeline(Readable.from(orders), counter)
-  assert.equal(counter.result().estimate, 3)
+  const estimator = small()
+  await pipeline(Readable.from(orders), createEstimatorSink(estimator, { keyFn: (o) => o.user }))
+  assert.equal(estimator.result().estimate, 3)
 })
 
 test('estimates accurately at scale, with real sub-sampling', async () => {
@@ -42,17 +39,22 @@ test('estimates accurately at scale, with real sub-sampling', async () => {
   }
 
   const epsilon = 0.1
-  const counter = new DistinctEstimateStream({ epsilon, delta: 0.05, expectedSize: total, seed: 5 })
-  await pipeline(Readable.from(data), counter)
+  const estimator = new CVM({ epsilon, delta: 0.05, expectedSize: total, seed: 5 })
+  await pipeline(Readable.from(data), createEstimatorSink(estimator))
 
-  const { estimate, p, threshold } = counter.result()
-  assert.equal(threshold, counter.threshold)
+  const { estimate, p } = estimator.result()
   assert.ok(p < 1, 'sub-sampling should have engaged')
   assert.ok(Math.abs(estimate - trueDistinct.size) / trueDistinct.size <= epsilon)
 })
 
+test('rejects anything that is not a CVM as the estimator', () => {
+  for (const bad of [undefined, null, {}, new Set(), small().toJSON()]) {
+    assert.throws(() => createEstimatorSink(bad), { name: 'TypeError', code: 'CVM_INVALID_OPTION' })
+  }
+})
+
 test('rejects keyFn that is not a function', () => {
-  assert.throws(() => new DistinctEstimateStream({ keyFn: 5 }), TypeError)
+  assert.throws(() => createEstimatorSink(small(), { keyFn: 5 }), TypeError)
 })
 
 test('propagates a source error through pipeline (single channel)', async () => {
@@ -61,8 +63,7 @@ test('propagates a source error through pipeline (single channel)', async () => 
     objectMode: true,
     read () { this.destroy(boom) }
   })
-  const counter = new DistinctEstimateStream({ epsilon: 0.5, delta: 0.1, expectedSize: 100, seed: 1 })
-  await assert.rejects(pipeline(source, counter), /source boom/)
+  await assert.rejects(pipeline(source, createEstimatorSink(small())), /source boom/)
 })
 
 test('objectMode: false delivers Buffers, so the default keyFn cannot dedup them', async () => {
@@ -70,53 +71,49 @@ test('objectMode: false delivers Buffers, so the default keyFn cannot dedup them
   // transform) and handed off as plain strings, with objectMode: false.
   const lines = ['apple', 'banana', 'apple', 'cherry']
 
-  const undecoded = new DistinctEstimateStream({
-    epsilon: 0.5, delta: 0.1, expectedSize: 100, seed: 1, objectMode: false
-  })
-  await pipeline(Readable.from(lines, { objectMode: false }), undecoded)
+  const undecoded = small()
+  await pipeline(
+    Readable.from(lines, { objectMode: false }),
+    createEstimatorSink(undecoded, { objectMode: false })
+  )
   // Node converts each string to a Buffer before _write sees it.
   assert.equal(undecoded.result().estimate, 4)
 
-  const decoded = new DistinctEstimateStream({
-    epsilon: 0.5,
-    delta: 0.1,
-    expectedSize: 100,
-    seed: 1,
-    objectMode: false,
-    keyFn: (chunk) => chunk.toString()
-  })
-  await pipeline(Readable.from(lines, { objectMode: false }), decoded)
+  const decoded = small()
+  await pipeline(
+    Readable.from(lines, { objectMode: false }),
+    createEstimatorSink(decoded, { objectMode: false, keyFn: (chunk) => chunk.toString() })
+  )
   assert.equal(decoded.result().estimate, 3)
 })
 
 test('objectMode: false rejects a chunk that is not a string, Buffer, TypedArray, or DataView', () => {
-  const counter = new DistinctEstimateStream({ epsilon: 0.5, expectedSize: 100, objectMode: false })
-  assert.throws(() => counter.write(42), TypeError)
+  const sink = createEstimatorSink(small(), { objectMode: false })
+  assert.throws(() => sink.write(42), TypeError)
 })
 
-test('passes Writable options through, so an AbortSignal still aborts', async () => {
-  // Options the sink doesn't read itself go to `Writable` rather than being
-  // dropped: picking out a couple by name would silently ignore the others.
+test('an abort stops the sink and leaves the partial count in the estimator', async () => {
   const controller = new AbortController()
-  const counter = new DistinctEstimateStream({ expectedSize: 100, signal: controller.signal })
-  const failed = new Promise((resolve) => counter.on('error', resolve))
+  const estimator = small()
+  const sink = createEstimatorSink(estimator, { signal: controller.signal })
+  const failed = new Promise((resolve) => sink.on('error', resolve))
 
-  counter.write('a')
+  sink.write('a')
+  sink.write('b')
   controller.abort()
+
   assert.equal((await failed).code, 'ABORT_ERR')
+  assert.equal(estimator.result().estimate, 2, 'what was counted before the stop survives')
 })
 
 test('propagates a keyFn error exactly once (no double reporting)', async () => {
-  const counter = new DistinctEstimateStream({
-    epsilon: 0.5,
-    delta: 0.1,
-    expectedSize: 100,
+  const sink = createEstimatorSink(small(), {
     keyFn: (x) => { if (x === 'bad') throw new Error('keyFn boom'); return x }
   })
   const errors = []
-  counter.on('error', (e) => errors.push(e))
+  sink.on('error', (e) => errors.push(e))
 
-  await assert.rejects(pipeline(Readable.from(['a', 'bad', 'c']), counter), /keyFn boom/)
+  await assert.rejects(pipeline(Readable.from(['a', 'bad', 'c']), sink), /keyFn boom/)
   assert.equal(errors.length, 1, 'error must be emitted exactly once')
-  assert.equal(counter.destroyed, true)
+  assert.equal(sink.destroyed, true)
 })

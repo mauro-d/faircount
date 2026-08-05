@@ -73,7 +73,7 @@ export interface CVMSnapshot {
   values: CountableValue[]
 }
 
-export interface EstimateOptions extends CVMOptions {
+export interface EstimateSyncOptions {
   /**
    * Maps each item to the value to count: a string, number, boolean or `null`.
    * The estimator dedups with a `Set`, so an object or array would be compared
@@ -82,17 +82,18 @@ export interface EstimateOptions extends CVMOptions {
    * lacking it as one and the same. Default: identity.
    */
   keyFn?: (item: any) => CountableValue
+}
+
+export interface EstimateOptions extends EstimateSyncOptions {
   /**
    * Stops the count: the promise rejects with an `AbortError` that has
-   * `code: 'ABORT_ERR'`, and the signal's own reason as its `cause`. An array or
-   * other synchronous source can only be stopped before it starts, since nothing
-   * else runs until the loop finishes. You lose the partial estimate; the stream
-   * API keeps it.
+   * `code: 'ABORT_ERR'`, and the signal's own reason as its `cause`. Whatever
+   * was counted before the stop stays in the estimator.
    */
   signal?: AbortSignal
 }
 
-export interface DistinctEstimateStreamOptions extends CVMOptions {
+export interface EstimatorSinkOptions {
   /**
    * Maps each chunk to the value to count: a string, number, boolean or `null`.
    * The estimator dedups with a `Set`, so an object or array would be compared
@@ -118,7 +119,7 @@ export interface DistinctEstimateStreamOptions extends CVMOptions {
   /**
    * Stops the count: the stream emits an `AbortError` that has
    * `code: 'ABORT_ERR'`, which also rejects `pipeline()`. Whatever was counted
-   * before the stop stays readable through {@link DistinctEstimateStream.result}.
+   * before the stop stays in the estimator.
    */
   signal?: AbortSignal
 }
@@ -162,27 +163,47 @@ export class CVM {
 }
 
 /**
- * A `Writable` sink that estimates distinct values written to it (object mode:
- * one value per write). Read {@link DistinctEstimateStream.result} once it has
- * finished. Errors surface once via the `'error'` event.
+ * A `Writable` sink that records every value written to it in an estimator
+ * (object mode: one value per write). Read the count from that estimator, once
+ * the pipe has finished. Errors surface once via the `'error'` event.
  */
-export class DistinctEstimateStream extends Writable {
-  constructor(options?: DistinctEstimateStreamOptions)
-  result(): CVMResult
-  /** The estimated number of distinct values. */
-  get distinct(): number
-  /** The maximum number of values the sample can hold. */
-  get threshold(): number
+export interface EstimatorSink extends Writable {
+  /** The estimator being fed, the one passed to {@link createEstimatorSink}. */
+  readonly estimator: CVM
 }
 
 /**
- * Estimate the number of distinct values in a source, returning a promise.
- * Accepts a sync iterable, an async iterable, or a Node `Readable`.
+ * Create a sink that feeds `estimator`. The estimator holds the count and the
+ * parameters; the options cover only how values reach it.
+ */
+export function createEstimatorSink(
+  estimator: CVM,
+  options?: EstimatorSinkOptions
+): EstimatorSink
+
+/**
+ * Count the distinct values of an async source into `estimator`, returning a
+ * promise for its {@link CVM.result}. Takes an async iterable or a Node
+ * `Readable`; for values already in memory use {@link estimateDistinctSync}.
+ * The estimator keeps whatever it counted, so the same one can be handed to
+ * further calls to carry a count across sources.
  */
 export function estimateDistinct(
-  source: Iterable<any> | AsyncIterable<any> | Readable,
+  estimator: CVM,
+  source: AsyncIterable<any> | Readable,
   options?: EstimateOptions
 ): Promise<CVMResult>
+
+/**
+ * Count the distinct values of an iterable into `estimator` and return its
+ * {@link CVM.result}. Runs to the end in one synchronous pass, so it takes no
+ * `signal`; for a source that arrives over time use {@link estimateDistinct}.
+ */
+export function estimateDistinctSync(
+  estimator: CVM,
+  source: Iterable<any>,
+  options?: EstimateSyncOptions
+): CVMResult
 
 /**
  * The maximum number of values that can be held: `⌈(12/ε²)·ln(3m/δ)⌉`, rounded
