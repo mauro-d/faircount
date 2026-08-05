@@ -1,5 +1,6 @@
 import { pipeline } from 'node:stream/promises'
-import { CVM, fail } from './cvm.mjs'
+import { CVM } from './cvm.mjs'
+import { fail } from './fail.mjs'
 import { createEstimatorSink } from './stream.mjs'
 
 const identity = (x) => x
@@ -31,7 +32,7 @@ function watchAbort (signal) {
 
 function checkArguments (estimator, keyFn) {
   if (!(estimator instanceof CVM)) {
-    throw fail(TypeError, 'CVM_INVALID_OPTION', 'estimator must be a CVM instance')
+    throw fail(TypeError, 'CVM_INVALID_OPTION', 'estimator must be a CVM instance: it is the first argument')
   }
   if (typeof keyFn !== 'function') {
     throw fail(TypeError, 'CVM_INVALID_OPTION', 'keyFn must be a function')

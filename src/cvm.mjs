@@ -1,17 +1,9 @@
 import { createRandom } from './random.mjs'
+import { fail } from './fail.mjs'
 
 const DEFAULT_EPSILON = 0.05
 const DEFAULT_DELTA = 0.01
 const SNAPSHOT_VERSION = 1
-
-// Errors carry a `code` so callers can branch on it instead of matching message
-// text. The helper drops itself from the stack trace.
-export function fail (Type, code, message) {
-  const error = new Type(message)
-  error.code = code
-  Error.captureStackTrace(error, fail)
-  return error
-}
 
 // A restored value has to compare equal to the same value arriving later, or the
 // sample would count it twice.

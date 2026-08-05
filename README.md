@@ -82,9 +82,12 @@ point, without building a full result object; `result()` bundles both (as
 `estimate` and `samples`) with `threshold` and `p`.
 
 The estimator is yours to keep: it can be saved and resumed, carried across
-several sources, and read at any moment. The three functions below don't replace
-it, they feed it. Each takes the estimator first, then a source, then options
-about how values get there. The five above belong to the estimator alone.
+several sources, and read at any moment. Every count you read covers everything
+it has seen, not just the last source you handed it.
+
+The three functions below don't replace the estimator, they feed it. Each takes
+it first, then a source, then options about how values get there. The five above
+belong to the estimator alone.
 
 ## Sync sources — `estimateDistinctSync`
 

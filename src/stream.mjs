@@ -1,5 +1,6 @@
 import { Writable } from 'node:stream'
-import { CVM, fail } from './cvm.mjs'
+import { CVM } from './cvm.mjs'
+import { fail } from './fail.mjs'
 
 const identity = (x) => x
 
@@ -11,7 +12,7 @@ class EstimatorSink extends Writable {
 
   constructor (estimator, options = {}) {
     if (!(estimator instanceof CVM)) {
-      throw fail(TypeError, 'CVM_INVALID_OPTION', 'estimator must be a CVM instance')
+      throw fail(TypeError, 'CVM_INVALID_OPTION', 'estimator must be a CVM instance: it is the first argument')
     }
     const { keyFn = identity, ...rest } = options
     if (typeof keyFn !== 'function') throw fail(TypeError, 'CVM_INVALID_OPTION', 'keyFn must be a function')

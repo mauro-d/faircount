@@ -65,6 +65,7 @@ test('every error carries a code, so callers need not match messages', () => {
   assert.equal(codeOf(() => new CVM({ epsilon: 5, expectedSize: 10 })), 'CVM_INVALID_OPTION')
   assert.equal(codeOf(() => new CVM({ random: 'nope', expectedSize: 10 })), 'CVM_INVALID_OPTION')
   assert.equal(codeOf(() => new CVM({})), 'CVM_INVALID_OPTION')
+  assert.equal(codeOf(() => new CVM({ expectedSize: 10, seed: 'x' })), 'CVM_INVALID_OPTION')
   assert.equal(codeOf(() => new CVM({ expectedSize: 10 }).add(10n).toJSON()), 'CVM_UNSERIALIZABLE_VALUE')
   assert.equal(codeOf(() => CVM.fromJSON({ ...valid, p: 0.3 })), 'CVM_INVALID_SNAPSHOT')
   assert.equal(codeOf(() => CVM.fromJSON('nope')), 'CVM_INVALID_SNAPSHOT')

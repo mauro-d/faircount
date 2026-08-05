@@ -17,14 +17,14 @@ type CountableValue = string | number | boolean | null
 export type CVMErrorCode =
   /** An option is out of range or of the wrong type. */
   | 'CVM_INVALID_OPTION'
-  /** `estimateDistinct` was handed something it cannot iterate. */
+  /** A source went to the wrong counting function, or is not iterable at all. */
   | 'CVM_INVALID_SOURCE'
   /** A snapshot given to `fromJSON` contradicts itself. */
   | 'CVM_INVALID_SNAPSHOT'
   /** A held value would not survive `toJSON` unchanged. */
   | 'CVM_UNSERIALIZABLE_VALUE'
 
-/** Parameters shared by the core, the stream, and `estimateDistinct`. */
+/** The estimator's own parameters. Only `new CVM()` takes them. */
 export interface CVMOptions {
   /**
    * How many items the stream is expected to hold. Required: it is what makes
@@ -48,7 +48,10 @@ export interface CVMOptions {
 
 /** The estimate and the state it came from. */
 export interface CVMResult {
-  /** The estimated number of distinct values. */
+  /**
+   * The estimated number of distinct values the estimator has seen, across every
+   * source it has been given, not only the one that produced this result.
+   */
   estimate: number
   /** How many values are held. */
   samples: number
@@ -132,7 +135,7 @@ export interface EstimatorSinkOptions {
  * by reference.
  */
 export class CVM {
-  constructor(options?: CVMOptions)
+  constructor(options: CVMOptions)
   readonly epsilon: number
   readonly delta: number
   readonly expectedSize: number
