@@ -26,16 +26,16 @@ export type CVMErrorCode =
 
 /** Parameters shared by the core, the stream, and `estimateDistinct`. */
 export interface CVMOptions {
+  /**
+   * How many items the stream is expected to hold. Required: it is what makes
+   * the `(ε, δ)` bound true, and it enters only through a logarithm, so an
+   * upper bound is fine and over-estimating is cheap.
+   */
+  expectedSize: number
   /** How close the estimate should be, as a fraction (`0.05` = ±5%). Default `0.05`. */
   epsilon?: number
   /** How often a run may land outside ±`epsilon` (`0.01` = at most 1%). Default `0.01`. */
   delta?: number
-  /**
-   * Expected/upper-bound stream length `m` (logarithmic effect). Optional, but
-   * omitting it sizes the threshold for a length-1 stream and emits a one-time
-   * `CVM_NO_EXPECTED_SIZE` process warning.
-   */
-  expectedSize?: number
   /**
    * Integer seed for the built-in generator: with the same seed and data, the
    * estimate is identical on every run. The trade-off: repeated runs share one

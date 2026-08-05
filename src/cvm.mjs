@@ -4,8 +4,6 @@ const DEFAULT_EPSILON = 0.05
 const DEFAULT_DELTA = 0.01
 const SNAPSHOT_VERSION = 1
 
-let warnedNoExpectedSize = false
-
 // Errors carry a `code` so callers can branch on it instead of matching message
 // text. The helper drops itself from the stack trace.
 export function fail (Type, code, message) {
@@ -58,29 +56,22 @@ export class CVM {
     const {
       epsilon = DEFAULT_EPSILON,
       delta = DEFAULT_DELTA,
-      expectedSize = 0,
+      expectedSize,
       seed,
       random
     } = options
 
+    // Required: it is what makes the (ε, δ) bound true, and a default would pick
+    // one on the caller's behalf. Over-estimating costs a logarithm, so there is
+    // no number here that is safe to guess.
+    if (expectedSize === undefined) {
+      throw fail(TypeError, 'CVM_INVALID_OPTION', 'expectedSize is required: pass the stream length you expect, an upper bound is fine')
+    }
     if (random !== undefined && typeof random !== 'function') {
       throw fail(TypeError, 'CVM_INVALID_OPTION', 'random must be a function returning a float in [0, 1)')
     }
 
-    // computeThreshold validates epsilon, delta and expectedSize, so an invalid
-    // parameter throws here, before the warning below can fire.
     this.#threshold = computeThreshold(epsilon, delta, expectedSize)
-
-    // Optional, but omitting it sizes the threshold for a length-1 stream, which is
-    // too small for the (ε, δ) guarantee on a real one. Warn once instead of failing.
-    if (expectedSize === 0 && !warnedNoExpectedSize) {
-      warnedNoExpectedSize = true
-      process.emitWarning(
-        'faircount: expectedSize was not set; the (ε, δ) guarantee assumes it bounds the stream length. Pass it to size the threshold correctly.',
-        { code: 'CVM_NO_EXPECTED_SIZE' }
-      )
-    }
-
     this.#epsilon = epsilon
     this.#delta = delta
     this.#expectedSize = expectedSize

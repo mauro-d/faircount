@@ -74,20 +74,32 @@ test('every error carries a code, so callers need not match messages', () => {
   const valid = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: 1000, seed: 1 }).add('a').toJSON()
 
   assert.equal(codeOf(() => computeThreshold(0, 0.1, 10)), 'CVM_INVALID_OPTION')
-  assert.equal(codeOf(() => new CVM({ epsilon: 5 })), 'CVM_INVALID_OPTION')
-  assert.equal(codeOf(() => new CVM({ random: 'nope' })), 'CVM_INVALID_OPTION')
+  assert.equal(codeOf(() => new CVM({ epsilon: 5, expectedSize: 10 })), 'CVM_INVALID_OPTION')
+  assert.equal(codeOf(() => new CVM({ random: 'nope', expectedSize: 10 })), 'CVM_INVALID_OPTION')
+  assert.equal(codeOf(() => new CVM({})), 'CVM_INVALID_OPTION')
   assert.equal(codeOf(() => new CVM({ expectedSize: 10 }).add(10n).toJSON()), 'CVM_UNSERIALIZABLE_VALUE')
   assert.equal(codeOf(() => CVM.fromJSON({ ...valid, p: 0.3 })), 'CVM_INVALID_SNAPSHOT')
   assert.equal(codeOf(() => CVM.fromJSON('nope')), 'CVM_INVALID_SNAPSHOT')
 })
 
 test('constructor validates parameters', () => {
-  assert.throws(() => new CVM({ epsilon: 0 }), RangeError)
-  assert.throws(() => new CVM({ epsilon: 1 }), RangeError)
-  assert.throws(() => new CVM({ delta: 0 }), RangeError)
-  assert.throws(() => new CVM({ delta: 1.5 }), RangeError)
+  assert.throws(() => new CVM({ epsilon: 0, expectedSize: 10 }), RangeError)
+  assert.throws(() => new CVM({ epsilon: 1, expectedSize: 10 }), RangeError)
+  assert.throws(() => new CVM({ delta: 0, expectedSize: 10 }), RangeError)
+  assert.throws(() => new CVM({ delta: 1.5, expectedSize: 10 }), RangeError)
   assert.throws(() => new CVM({ expectedSize: -1 }), RangeError)
-  assert.throws(() => new CVM({ random: 'nope' }), TypeError)
+  assert.throws(() => new CVM({ random: 'nope', expectedSize: 10 }), TypeError)
+})
+
+test('expectedSize is required: it is what makes the bound true', () => {
+  // No default can be right here. Sizing for a length-1 stream, which is what
+  // the old default did, quietly gives up the guarantee the library exists for.
+  assert.throws(() => new CVM({}), { name: 'TypeError', code: 'CVM_INVALID_OPTION', message: /expectedSize is required/ })
+  assert.throws(() => new CVM({ epsilon: 0.5, delta: 0.1 }), TypeError)
+
+  // A snapshot written before it was required still restores: it carries 0.
+  const old = { version: 1, epsilon: 0.5, delta: 0.1, expectedSize: 0, threshold: computeThreshold(0.5, 0.1, 0), p: 1, values: ['a'] }
+  assert.equal(CVM.fromJSON(old).add('b').distinct, 2)
 })
 
 test('estimate is exact when F0 never exceeds the threshold', () => {

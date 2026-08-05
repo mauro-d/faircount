@@ -57,9 +57,9 @@ count, and you feed it values:
 import { CVM } from 'faircount'
 
 const estimator = new CVM({
-  epsilon: 0.05,          // accuracy: within ±5% of the true count
-  delta: 0.01,            // reliability: may land outside ±5% at most 1% of the time
-  expectedSize: 1_000_000 // expected stream length; an upper bound is fine
+  expectedSize: 1_000_000, // how many items you expect; an upper bound is fine
+  epsilon: 0.05,           // accuracy: within ±5% of the true count
+  delta: 0.01              // reliability: may land outside ±5% at most 1% of the time
 })
 
 for (const value of values) estimator.add(value)
@@ -69,9 +69,9 @@ console.log(`≈ ${estimator.distinct} distinct values`)
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| `expectedSize` | required | About how many items the stream has. An upper bound is fine: it enters through a logarithm, so over-estimating a thousandfold widens the error by about a sixth. |
 | `epsilon` | `0.05` | How close the estimate should be, as a fraction: `0.05` = ±5%. Smaller is more accurate but uses more memory. |
 | `delta` | `0.01` | How often a run may land outside ±`epsilon`: `0.01` = at most 1% of the time. |
-| `expectedSize` | `0` | About how many items the stream has (an upper bound is fine). Optional, but omitting it triggers a warning. |
 | `seed` | — | Integer seed for the built-in generator; set it for [reproducible runs](#reproducible-randomness). Leave unset for fresh randomness each run. |
 | `random` | `Math.random` | The randomness source: a function returning a float in `[0, 1)`. Overrides `seed`. |
 
