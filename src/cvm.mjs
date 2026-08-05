@@ -51,6 +51,11 @@ export class CVM {
   #delta
   #expectedSize
   #threshold
+  #p
+  #holes
+  #random
+  #X
+  #keep
 
   constructor (options = {}) {
     const {
@@ -76,25 +81,25 @@ export class CVM {
     this.#delta = delta
     this.#expectedSize = expectedSize
 
-    this._keep = this.#threshold / 2
-    this._random = random ?? createRandom(seed)
-    this._X = new Set()
-    this._p = 1
-    this._holes = 0
+    this.#keep = this.#threshold / 2
+    this.#random = random ?? createRandom(seed)
+    this.#X = new Set()
+    this.#p = 1
+    this.#holes = 0
   }
 
   // Algorithm 3, lines 3-10: insert the element with probability p, remove it
   // otherwise; when the buffer fills up, keep a uniformly random half and halve p.
   add (element) {
-    if (this._random() < this._p) {
-      const X = this._X
+    if (this.#random() < this.#p) {
+      const X = this.#X
       X.add(element)
       if (X.size === this.#threshold) {
-        this._subsample()
-        this._p /= 2
+        this.#subsample()
+        this.#p /= 2
       }
-    } else if (this._X.delete(element)) {
-      this._maybeCompact()
+    } else if (this.#X.delete(element)) {
+      this.#maybeCompact()
     }
     return this
   }
@@ -102,11 +107,11 @@ export class CVM {
   // Deleted entries stay in the Set's chains until it is rebuilt, so churn on
   // hot keys slows every lookup down. Rebuilding it here leaves membership,
   // order and randomness untouched, and averages out to nothing per delete.
-  _maybeCompact () {
-    this._holes++
-    if (this._holes >= this._X.size && this._holes >= 1024) {
-      this._X = new Set(this._X)
-      this._holes = 0
+  #maybeCompact () {
+    this.#holes++
+    if (this.#holes >= this.#X.size && this.#holes >= 1024) {
+      this.#X = new Set(this.#X)
+      this.#holes = 0
     }
   }
 
@@ -114,20 +119,20 @@ export class CVM {
   // shuffle the kept slots to the front, drop the rest). Each element is retained
   // with probability exactly ½, and once p is halved the estimate |X|/p is exactly
   // what it was before the sub-sample.
-  _subsample () {
-    const arr = [...this._X]
-    const keep = this._keep
+  #subsample () {
+    const arr = [...this.#X]
+    const keep = this.#keep
     const len = arr.length
     for (let i = 0; i < keep; i++) {
-      const j = i + Math.floor(this._random() * (len - i))
+      const j = i + Math.floor(this.#random() * (len - i))
       const tmp = arr[i]
       arr[i] = arr[j]
       arr[j] = tmp
     }
     const next = new Set()
     for (let i = 0; i < keep; i++) next.add(arr[i])
-    this._X = next
-    this._holes = 0
+    this.#X = next
+    this.#holes = 0
   }
 
   // Fast path for plain arrays: an indexed loop skips the iterator protocol. The
@@ -158,26 +163,26 @@ export class CVM {
   }
 
   get distinct () {
-    return this._X.size / this._p
+    return this.#X.size / this.#p
   }
 
   get sampleCount () {
-    return this._X.size
+    return this.#X.size
   }
 
   result () {
     return {
-      estimate: this._X.size / this._p,
-      samples: this._X.size,
+      estimate: this.#X.size / this.#p,
+      samples: this.#X.size,
       threshold: this.#threshold,
-      p: this._p
+      p: this.#p
     }
   }
 
   // State as a plain object, ready for JSON.stringify (which calls this method
   // on its own). Its size is bounded by the threshold, like memory.
   toJSON () {
-    const values = [...this._X]
+    const values = [...this.#X]
     for (let i = 0; i < values.length; i++) {
       if (!isRestorable(values[i])) {
         throw fail(TypeError, 'CVM_UNSERIALIZABLE_VALUE', `values must be a string, a finite number, a boolean or null to be saved, got ${String(values[i])}`)
@@ -189,7 +194,7 @@ export class CVM {
       delta: this.#delta,
       expectedSize: this.#expectedSize,
       threshold: this.#threshold,
-      p: this._p,
+      p: this.#p,
       values
     }
   }
@@ -233,15 +238,15 @@ export class CVM {
       throw fail(RangeError, 'CVM_INVALID_SNAPSHOT', 'snapshot values contain duplicates')
     }
 
-    cvm._X = restored
-    cvm._p = p
+    cvm.#X = restored
+    cvm.#p = p
     return cvm
   }
 
   reset () {
-    this._X = new Set()
-    this._p = 1
-    this._holes = 0
+    this.#X = new Set()
+    this.#p = 1
+    this.#holes = 0
     return this
   }
 }
