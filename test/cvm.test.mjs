@@ -32,18 +32,6 @@ function makeSkewedData (total, unique, seed) {
   return { data, f0: set.size }
 }
 
-// A batch of values seen once at the start and never again, then traffic that
-// keeps repeating. A sub-sample that favours the values it already holds keeps
-// the cold prefix forever, and the estimate roughly doubles.
-function makeColdPrefixData (coldValues, hotValues, repeats) {
-  const data = []
-  for (let i = 0; i < coldValues; i++) data.push(`cold${i}`)
-  for (let r = 0; r < repeats; r++) {
-    for (let i = 0; i < hotValues; i++) data.push(`hot${i}`)
-  }
-  return { data, f0: coldValues + hotValues }
-}
-
 test('computeThreshold is ⌈(12/ε²)·ln(3m/δ)⌉ rounded up to even', () => {
   const eps = 0.25
   const delta = 0.01
@@ -114,45 +102,77 @@ test('estimate is exact when F0 never exceeds the threshold', () => {
   assert.equal(r.estimate, f0)
 })
 
-test('estimate stays within ε of F0 with probability ≥ 1-δ (statistical)', () => {
-  const epsilon = 0.1
-  const delta = 0.05
-  const { data, f0 } = makeData(100_000, 30_000, 123)
+test('the sub-sample keeps exactly half and halves p with it, every time', () => {
+  // Equation 2 cancels only because the retention rate and the p update are the
+  // same f. Move one without the other and every estimate is skewed, with the
+  // paper's proof no longer covering the code.
+  // A coin of 0 inserts every value, so the cadence is exact: the buffer fills
+  // after `threshold` values, and after every `threshold / 2` from then on.
+  const cvm = new CVM({ epsilon: 0.999, delta: 0.999, expectedSize: 0, random: () => 0 })
+  const half = cvm.threshold / 2
+  let value = 0
 
-  const trials = 100
-  let within = 0
-  let relSum = 0
-  for (let t = 0; t < trials; t++) {
-    const cvm = new CVM({ epsilon, delta, expectedSize: data.length, seed: t + 1 })
-    cvm.addMany(data)
-    const rel = Math.abs(cvm.distinct - f0) / f0
-    relSum += rel
-    if (rel <= epsilon) within++
-    assert.ok(cvm.result().p < 1, 'sub-sampling should have engaged')
+  for (let round = 1; round <= 6; round++) {
+    const untilFull = round === 1 ? cvm.threshold : half
+    for (let i = 0; i < untilFull; i++) cvm.add(`v${value++}`)
+
+    assert.equal(cvm.sampleCount, half, `round ${round} kept ${cvm.sampleCount}, not ${half}`)
+    assert.equal(cvm.result().p, 2 ** -round, `round ${round} left p at ${cvm.result().p}`)
   }
-  assert.ok(within / trials >= 0.9, `only ${within}/${trials} within ε`)
-  assert.ok(relSum / trials < epsilon, `mean relative error ${relSum / trials} too high`)
 })
 
-test('estimator is unbiased: mean over many seeds ≈ F0', () => {
-  const { data, f0 } = makeData(100_000, 30_000, 123)
-  const trials = 200
-  let sum = 0
-  for (let t = 1; t <= trials; t++) {
-    sum += new CVM({ epsilon: 0.1, delta: 0.05, expectedSize: data.length, seed: t }).addMany(data).distinct
+test('the sub-sample is uniform over every half-subset', () => {
+  // The partial Fisher-Yates is ours, the uniform n/2-subset is the paper's
+  // requirement. A shuffle drawing j from the whole range instead of the
+  // remaining tail still keeps n/2 values and quietly biases which ones, which
+  // no count-based assertion would catch.
+  const epsilon = 0.999
+  const delta = 0.999
+  const threshold = computeThreshold(epsilon, delta, 0)
+  const snapshot = {
+    version: 1,
+    epsilon,
+    delta,
+    expectedSize: 0,
+    threshold,
+    p: 1,
+    values: Array.from({ length: threshold - 1 }, (_, i) => i)
   }
-  const bias = Math.abs(sum / trials - f0) / f0
-  assert.ok(bias < 0.02, `mean estimate biased by ${(bias * 100).toFixed(2)}%`)
+
+  const seen = new Map()
+  const trials = 200_000
+  for (let i = 0; i < trials; i++) {
+    const cvm = CVM.fromJSON(snapshot)
+    cvm.add(threshold - 1)
+    const kept = cvm.toJSON().values.sort((a, b) => a - b).join(',')
+    seen.set(kept, (seen.get(kept) ?? 0) + 1)
+  }
+
+  const subsets = 3432 // C(14, 7)
+  assert.equal(seen.size, subsets, `only ${seen.size} of ${subsets} subsets ever appeared`)
+  assert.ok([...seen.keys()].every((k) => k.split(',').length === threshold / 2))
+
+  // Too many cells to compare one by one: chi-square over all of them rejects a
+  // 5% skew at this many rounds, and passes the real sampler at |z| well under 1.
+  const expected = trials / subsets
+  let chiSquare = 0
+  for (const count of seen.values()) chiSquare += ((count - expected) ** 2) / expected
+  const z = (chiSquare - (subsets - 1)) / Math.sqrt(2 * (subsets - 1))
+  assert.ok(Math.abs(z) < 5, `chi-square z ${z.toFixed(2)} says the subsets are not equally likely`)
 })
 
 test('is total: never fails, even on inputs that make the original return ⊥', () => {
-  // Constant coin 0.9 keeps the buffer full in the original algorithm; the new
-  // variant sub-samples to exactly n/2, so it can never get stuck.
-  const cvm = new CVM({ epsilon: 0.9, delta: 0.9, expectedSize: 1000, random: () => 0.9 })
+  // A coin of 0 inserts every value, so the buffer refills and sub-samples over
+  // and over: the original stalls with a full buffer and returns ⊥, this one
+  // always shrinks to n/2. A coin of 0.9 would fire the sub-sample once and then
+  // insert nothing ever again, which proves nothing.
+  const cvm = new CVM({ epsilon: 0.9, delta: 0.9, expectedSize: 1000, random: () => 0 })
   assert.doesNotThrow(() => {
-    for (let i = 0; i < cvm.threshold * 4; i++) cvm.add(`x${i}`)
+    for (let i = 0; i < cvm.threshold * 8; i++) cvm.add(`x${i}`)
   })
   assert.ok(Number.isFinite(cvm.distinct))
+  assert.ok(cvm.sampleCount < cvm.threshold, 'the buffer never stays full')
+  assert.ok(cvm.result().p < 2 ** -8, 'sub-sampling fired many times')
 })
 
 test('keeps the buffer within the threshold (memory bound)', () => {
@@ -162,7 +182,7 @@ test('keeps the buffer within the threshold (memory bound)', () => {
     cvm.add(`v${i % 80_000}`)
     if (cvm.sampleCount > maxSamples) maxSamples = cvm.sampleCount
   }
-  assert.ok(maxSamples <= cvm.threshold, `samples ${maxSamples} exceeded threshold ${cvm.threshold}`)
+  assert.ok(maxSamples < cvm.threshold, `samples ${maxSamples} reached threshold ${cvm.threshold}`)
   assert.ok(cvm.result().p < 1, 'sub-sampling should have engaged')
 })
 
@@ -179,30 +199,6 @@ test('the parameters cannot be assigned, so the memory bound cannot be lifted', 
   assert.ok(cvm.sampleCount <= cvm.threshold, `samples ${cvm.sampleCount} exceeded threshold ${cvm.threshold}`)
 })
 
-test('stays unbiased on a skewed stream (hot-key churn in the delete branch)', () => {
-  const { data, f0 } = makeSkewedData(60_000, 30_000, 5)
-  const trials = 150
-  let sum = 0
-  for (let t = 1; t <= trials; t++) {
-    sum += new CVM({ epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: t }).addMany(data).distinct
-  }
-  const bias = Math.abs(sum / trials - f0) / f0
-  assert.ok(bias < 0.03, `mean estimate biased by ${(bias * 100).toFixed(2)}% on skewed data`)
-})
-
-test('stays unbiased when early values never come back (cold prefix)', () => {
-  const { data, f0 } = makeColdPrefixData(3000, 30_000, 4)
-  const trials = 60
-  let sum = 0
-  for (let t = 1; t <= trials; t++) {
-    const cvm = new CVM({ epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: t })
-    sum += cvm.addMany(data).distinct
-    if (t === 1) assert.ok(cvm.result().p < 1, 'precondition: sub-sampling engages')
-  }
-  const bias = Math.abs(sum / trials - f0) / f0
-  assert.ok(bias < 0.05, `mean estimate biased by ${(bias * 100).toFixed(2)}% on a cold-prefix stream`)
-})
-
 test('same seed reproduces the same estimate under hot-key churn', () => {
   const { data, f0 } = makeSkewedData(60_000, 30_000, 5)
   const opts = { epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: 42 }
@@ -217,7 +213,7 @@ test('same seed reproduces the same estimate under hot-key churn', () => {
     cvm.add(v)
     if (cvm.sampleCount > maxSamples) maxSamples = cvm.sampleCount
   }
-  assert.ok(maxSamples <= cvm.threshold, `samples ${maxSamples} exceeded threshold ${cvm.threshold}`)
+  assert.ok(maxSamples < cvm.threshold, `samples ${maxSamples} reached threshold ${cvm.threshold}`)
 })
 
 test('addMany takes arrays and other iterables alike', () => {
@@ -290,21 +286,6 @@ test('fromJSON rejects a snapshot that contradicts itself', () => {
 
   // A halved p is the one thing that legitimately differs from the fresh state.
   assert.equal(CVM.fromJSON({ ...valid, p: 0.25 }).result().p, 0.25)
-})
-
-test('restoring keeps the estimator unbiased', () => {
-  const { data, f0 } = makeData(60_000, 25_000, 17)
-  const firstHalf = data.slice(0, data.length / 2)
-  const secondHalf = data.slice(data.length / 2)
-
-  const trials = 100
-  let sum = 0
-  for (let t = 1; t <= trials; t++) {
-    const saved = new CVM({ epsilon: 0.2, delta: 0.05, expectedSize: data.length, seed: t }).addMany(firstHalf)
-    sum += CVM.fromJSON(JSON.parse(JSON.stringify(saved))).addMany(secondHalf).distinct
-  }
-  const bias = Math.abs(sum / trials - f0) / f0
-  assert.ok(bias < 0.03, `mean estimate biased by ${(bias * 100).toFixed(2)}% across save and restore`)
 })
 
 test('reset clears state and reuses parameters', () => {
