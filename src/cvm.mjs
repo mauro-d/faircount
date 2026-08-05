@@ -49,10 +49,6 @@ export function computeThreshold (epsilon, delta, expectedSize) {
 // disappears. With no failed run to condition on, E[estimate] = F0 exactly.
 // Feed values with add(), read result(); values must be Set-comparable.
 export class CVM {
-  // Private with a getter each, so `readonly` in the types is true. Assigning
-  // `threshold` from outside would leave `_keep` on the old value: the
-  // sub-sample would stop retaining half while `p` still halves, and with it
-  // goes unbiasedness.
   #epsilon
   #delta
   #expectedSize
