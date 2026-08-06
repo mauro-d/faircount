@@ -44,7 +44,6 @@ estimate's expected value is exactly the true count.
 - [Saving and resuming](#saving-and-resuming)
 - [Errors](#errors)
 - [Benchmarks](#benchmarks)
-- [Migrating from 0.4](#migrating-from-04)
 - [References](#references)
 - [License](#license)
 
@@ -417,34 +416,6 @@ epsilon 0.20 the five ranged from 0.4% to 3.0%, enough for one draw to put a
 larger epsilon ahead of a smaller one. Memory and time vary by machine, Node
 version, and data shape. Run `npm run bench` to measure on your own setup, which
 prints the median and the range; scenarios are defined in `bench/scenarios.mjs`.
-
-## Migrating from 0.4
-
-Every function takes the estimator first, and the parameters that size it belong
-to `new CVM()` alone, `expectedSize` included and no longer optional:
-
-```js
-// 0.4
-const { estimate } = await estimateDistinct(values, { epsilon: 0.05, expectedSize: 1_000_000 })
-
-const counter = new DistinctEstimateStream({ epsilon: 0.05, expectedSize: 1_000_000 })
-await pipeline(values, counter)
-counter.result()
-
-// 1.0
-const estimator = new CVM({ epsilon: 0.05, expectedSize: 1_000_000 })
-const { estimate } = estimateDistinctSync(estimator, values)
-
-await pipeline(values, createEstimatorSink(estimator))
-estimator.result()
-```
-
-`estimateDistinct` now takes async sources only, with `estimateDistinctSync` for
-what you already hold. `expectedSize` is required and must be at least 1, where
-0.4 accepted its absence with a one-time warning; `computeThreshold` refuses a
-length below 1 for the same reason, since `ln(3m/δ)` has nothing to say about a
-stream of length zero. `CVM` keeps its methods and its snapshot format, and
-`createRandom` is unchanged.
 
 ## References
 
