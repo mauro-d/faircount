@@ -126,6 +126,27 @@ test('the sub-sample keeps exactly half and halves p with it, every time', () =>
   }
 })
 
+test('a fixed seed over a fixed stream gives a fixed answer (golden vector)', () => {
+  // Every other check here is relational: the APIs against each other, the
+  // structure against itself. None of them can see a core that is wrong in the
+  // same way everywhere. This one pins the number. It dies on a compaction
+  // rebuild that loses entries (4912), on a seeded generator quantised to eight
+  // levels (31360) and on a Fisher-Yates drawing over the whole array (8528).
+  // Integer arithmetic only, so the stream is byte-identical on every engine.
+  const data = []
+  let s = 12345
+  for (let i = 0; i < 200_000; i++) {
+    s = (s * 48271) % 2147483647
+    data.push(s % 10 === 0 ? `cold${s % 100000}` : `hot${s % 20}`) // 90% churn on 20 hot keys
+  }
+  assert.equal(new Set(data).size, 8664, 'the workload itself must not drift')
+
+  const cvm = new CVM({ epsilon: 0.5, delta: 0.1, expectedSize: data.length, seed: 7 })
+  cvm.addMany(data)
+
+  assert.deepEqual(cvm.result(), { estimate: 8656, samples: 541, threshold: 750, p: 1 / 16 })
+})
+
 test('the sub-sample is uniform over every half-subset', () => {
   // The partial Fisher-Yates is ours, the uniform n/2-subset is the paper's
   // requirement. A shuffle drawing j from the whole range instead of the
