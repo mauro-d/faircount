@@ -30,6 +30,16 @@ function watchAbort (signal) {
   return { fired, release: () => signal.removeEventListener('abort', onAbort) }
 }
 
+// `return()` may be absent, may return a plain result object rather than a
+// promise, and may throw either way: `for await` tolerates all three, so this
+// has to as well. Whatever it does, the error already on its way out is the one
+// the caller should see.
+function closeQuietly (iterator) {
+  try {
+    Promise.resolve(iterator.return?.()).catch(() => {})
+  } catch { /* nothing left to do about it */ }
+}
+
 function checkArguments (estimator, keyFn) {
   if (!(estimator instanceof CVM)) {
     throw fail(TypeError, 'CVM_INVALID_OPTION', 'estimator must be a CVM instance: it is the first argument')
@@ -106,7 +116,7 @@ export async function estimateDistinct (estimator, source, options = {}) {
     // `return()` queues behind the `next()` still in flight, so awaiting it
     // would hand back the delay the abort just avoided. The caller is released
     // now, the source finishes closing when its pending step settles.
-    if (!exhausted) iterator.return?.()?.catch(() => { /* the error on its way out is the one that matters */ })
+    if (!exhausted) closeQuietly(iterator)
   }
 
   return estimator.result()

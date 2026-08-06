@@ -163,7 +163,14 @@ test('a source that misbehaves on close cannot spoil the abort', async () => {
     }
   })
 
-  for (const close of [undefined, () => undefined, async () => { throw new Error('close boom') }]) {
+  const closers = [
+    undefined,
+    () => undefined,
+    () => ({ done: true }), // legal, and not a promise
+    () => { throw new Error('sync close boom') }, // throws before returning anything
+    async () => { throw new Error('close boom') }
+  ]
+  for (const close of closers) {
     const estimator = small()
     const err = await estimateDistinct(estimator, stalling(close), {
       signal: AbortSignal.timeout(20)
