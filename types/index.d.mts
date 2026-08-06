@@ -27,9 +27,9 @@ export type CVMErrorCode =
 /** The estimator's own parameters. Only `new CVM()` takes them. */
 export interface CVMOptions {
   /**
-   * How many items the stream is expected to hold. Required: it is what makes
-   * the `(ε, δ)` bound true, and it enters only through a logarithm, so an
-   * upper bound is fine and over-estimating is cheap.
+   * How many items the stream is expected to hold, at least 1. Required: it is
+   * what makes the `(ε, δ)` bound true, and it enters only through a logarithm,
+   * so an upper bound is fine and over-estimating is cheap.
    */
   expectedSize: number
   /** How close the estimate should be, as a fraction (`0.05` = ±5%). Default `0.05`. */
@@ -210,8 +210,8 @@ export function estimateDistinctSync(
 
 /**
  * The maximum number of values that can be held: `⌈(12/ε²)·ln(3m/δ)⌉`, rounded
- * up to an even number. Throws `RangeError` on a parameter that is out of range
- * or not a number.
+ * up to an even number. `expectedSize` must be at least 1. Throws `RangeError`
+ * on a parameter that is out of range or not a number.
  */
 export function computeThreshold(epsilon: number, delta: number, expectedSize: number): number
 

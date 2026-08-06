@@ -42,8 +42,10 @@ test('computeThreshold is ⌈(12/ε²)·ln(3m/δ)⌉ rounded up to even', () => 
   assert.ok(computeThreshold(eps, delta, m) >= 2)
 })
 
-test('computeThreshold treats expectedSize 0 as 1 and grows as ε shrinks', () => {
-  assert.equal(computeThreshold(0.25, 0.01, 0), computeThreshold(0.25, 0.01, 1))
+test('computeThreshold refuses a length below 1 and grows as ε shrinks', () => {
+  // ln(3m/δ) has nothing to say about a stream of length zero.
+  assert.throws(() => computeThreshold(0.25, 0.01, 0), RangeError)
+  assert.throws(() => computeThreshold(0.25, 0.01, 0.5), RangeError)
   assert.ok(computeThreshold(0.05, 0.01, 1000) > computeThreshold(0.25, 0.01, 1000))
 })
 
@@ -86,9 +88,11 @@ test('expectedSize is required: it is what makes the bound true', () => {
   assert.throws(() => new CVM({}), { name: 'TypeError', code: 'CVM_INVALID_OPTION', message: /expectedSize is required/ })
   assert.throws(() => new CVM({ epsilon: 0.5, delta: 0.1 }), TypeError)
 
-  // A snapshot written before it was required still restores: it carries 0.
-  const old = { version: 1, epsilon: 0.5, delta: 0.1, expectedSize: 0, threshold: computeThreshold(0.5, 0.1, 0), p: 1, values: ['a'] }
-  assert.equal(CVM.fromJSON(old).add('b').distinct, 2)
+  assert.throws(() => new CVM({ expectedSize: 0 }), { name: 'RangeError', code: 'CVM_INVALID_OPTION' })
+
+  // A snapshot carrying 0 is refused as a snapshot, not as a caller mistake.
+  const zero = { version: 1, epsilon: 0.5, delta: 0.1, expectedSize: 0, threshold: computeThreshold(0.5, 0.1, 1), p: 1, values: ['a'] }
+  assert.throws(() => CVM.fromJSON(zero), { name: 'TypeError', code: 'CVM_INVALID_SNAPSHOT' })
 })
 
 test('estimate is exact when F0 never exceeds the threshold', () => {
@@ -109,7 +113,7 @@ test('the sub-sample keeps exactly half and halves p with it, every time', () =>
   // paper's proof no longer covering the code.
   // A coin of 0 inserts every value, so the cadence is exact: the buffer fills
   // after `threshold` values, and after every `threshold / 2` from then on.
-  const cvm = new CVM({ epsilon: 0.999, delta: 0.999, expectedSize: 0, random: () => 0 })
+  const cvm = new CVM({ epsilon: 0.999, delta: 0.999, expectedSize: 1, random: () => 0 })
   const half = cvm.threshold / 2
   let value = 0
 
@@ -129,12 +133,12 @@ test('the sub-sample is uniform over every half-subset', () => {
   // no count-based assertion would catch.
   const epsilon = 0.999
   const delta = 0.999
-  const threshold = computeThreshold(epsilon, delta, 0)
+  const threshold = computeThreshold(epsilon, delta, 1)
   const snapshot = {
     version: 1,
     epsilon,
     delta,
-    expectedSize: 0,
+    expectedSize: 1,
     threshold,
     p: 1,
     values: Array.from({ length: threshold - 1 }, (_, i) => i)

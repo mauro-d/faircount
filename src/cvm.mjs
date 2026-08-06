@@ -24,11 +24,12 @@ export function computeThreshold (epsilon, delta, expectedSize) {
   if (typeof delta !== 'number' || !(delta > 0 && delta < 1)) {
     throw fail(RangeError, 'CVM_INVALID_OPTION', `delta must be a number in (0, 1), got ${delta}`)
   }
-  if (typeof expectedSize !== 'number' || !Number.isFinite(expectedSize) || expectedSize < 0) {
-    throw fail(RangeError, 'CVM_INVALID_OPTION', `expectedSize must be a non-negative finite number, got ${expectedSize}`)
+  // At least 1: the formula's ln(3m/δ) has nothing to say about a stream of
+  // length zero, and 0 used to be the sentinel for "not provided".
+  if (typeof expectedSize !== 'number' || !Number.isFinite(expectedSize) || expectedSize < 1) {
+    throw fail(RangeError, 'CVM_INVALID_OPTION', `expectedSize must be a finite number of at least 1, got ${expectedSize}`)
   }
-  const m = expectedSize > 0 ? expectedSize : 1
-  const n = Math.ceil((12 / (epsilon * epsilon)) * Math.log((3 * m) / delta))
+  const n = Math.ceil((12 / (epsilon * epsilon)) * Math.log((3 * expectedSize) / delta))
   return Math.max(2, n + (n % 2))
 }
 
@@ -203,6 +204,9 @@ export class CVM {
     }
 
     const { epsilon, delta, expectedSize, threshold, p, values } = snapshot
+    if (typeof expectedSize !== 'number' || expectedSize < 1) {
+      throw fail(TypeError, 'CVM_INVALID_SNAPSHOT', `snapshot expectedSize must be a number of at least 1, got ${expectedSize}`)
+    }
     // The constructor validates the parameters and recomputes the threshold, so a
     // mismatch means the snapshot no longer describes the state it carries.
     const cvm = new CVM({ epsilon, delta, expectedSize })
