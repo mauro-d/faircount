@@ -192,6 +192,14 @@ test('a signal already aborted stops before the first value', async () => {
   }
 })
 
+test('the synchronous pass refuses a signal instead of ignoring it', () => {
+  // Ignoring it would leave a caller believing the count can be stopped.
+  assert.throws(
+    () => estimateDistinctSync(small(), ['a'], { signal: AbortSignal.timeout(1) }),
+    { name: 'TypeError', code: 'CVM_INVALID_OPTION', message: /use estimateDistinct/ }
+  )
+})
+
 test('an invalid signal is rejected the same way for every source kind', async () => {
   for (const source of [(async function * () { yield 'a' })(), Readable.from(['a'])]) {
     await assert.rejects(

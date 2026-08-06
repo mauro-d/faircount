@@ -52,8 +52,14 @@ function checkArguments (estimator, keyFn) {
 // No `signal` here: a synchronous loop runs to its end whatever happens, and
 // Node's own *Sync functions take no signal either.
 export function estimateDistinctSync (estimator, source, options = {}) {
-  const { keyFn = identity } = options
+  const { keyFn = identity, signal } = options
   checkArguments(estimator, keyFn)
+  // Refused rather than ignored: a caller who passes one believes the count can
+  // be stopped, and a synchronous loop cannot be.
+  if (signal !== undefined) {
+    throw fail(TypeError, 'CVM_INVALID_OPTION',
+      'estimateDistinctSync takes no signal: a synchronous pass runs to the end, use estimateDistinct for a source that can be stopped')
+  }
 
   if (Array.isArray(source) && source[Symbol.iterator] === Array.prototype[Symbol.iterator]) {
     // Fast path for plain arrays, as in addMany.
