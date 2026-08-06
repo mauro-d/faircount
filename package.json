@@ -28,7 +28,8 @@
     "lint": "standard",
     "lint:fix": "standard --fix",
     "bench": "node bench/index.mjs",
-    "prepublishOnly": "npm run lint && npm test"
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test",
+    "typecheck": "tsc -p typecheck"
   },
   "keywords": [
     "cvm",
@@ -56,7 +57,9 @@
   "author": "Mauro <mauro.doganieri@gmail.com>",
   "license": "ISC",
   "devDependencies": {
-    "standard": "^17.1.2"
+    "@types/node": "^26.1.2",
+    "standard": "^17.1.2",
+    "typescript": "^5.9.3"
   },
   "standard": {
     "ignore": [
