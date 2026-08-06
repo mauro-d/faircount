@@ -1,7 +1,7 @@
 {
   "name": "faircount",
   "version": "0.4.0",
-  "description": "An honest estimate of how many distinct values a stream contains — the unbiased CVM variant, with proven (ε, δ) error bounds in flat memory. One estimator, fed directly or through the promise and stream APIs.",
+  "description": "An honest estimate of how many distinct values a stream contains \u2014 the unbiased CVM variant, with proven (\u03b5, \u03b4) error bounds and a sample of bounded size. One estimator, fed directly or from any source, in memory or streamed.",
   "type": "module",
   "main": "./src/index.mjs",
   "module": "./src/index.mjs",
