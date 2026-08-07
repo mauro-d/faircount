@@ -37,6 +37,7 @@ estimate's expected value is exactly the true count.
 - [Sync sources — `estimateDistinctSync`](#sync-sources--estimatedistinctsync)
 - [Async sources — `estimateDistinct`](#async-sources--estimatedistinct)
 - [Stream API — `createEstimatorSink`](#stream-api--createestimatorsink)
+- [Cancelling](#cancelling)
 - [Key concepts](#key-concepts)
 - [Counting by a key (`keyFn`)](#counting-by-a-key-keyfn)
 - [Result](#result)
@@ -57,6 +58,10 @@ Requires Node 20 or newer. The package is ESM-only, has no runtime dependencies,
 and includes TypeScript types.
 
 ## The estimator — `CVM`
+
+```ts
+new CVM(options: CVMOptions)
+```
 
 Everything starts with an estimator. It holds the parameters, the sample and the
 count, and you feed it values:
@@ -99,6 +104,10 @@ belong to the estimator alone.
 
 ## Sync sources — `estimateDistinctSync`
 
+```ts
+estimateDistinctSync(estimator: CVM, source: Iterable<any>, options?: EstimateSyncOptions): CVMResult
+```
+
 Counts an iterable you already hold and returns the result:
 
 ```js
@@ -110,6 +119,10 @@ const { estimate } = estimateDistinctSync(estimator, orders, { keyFn: (o) => o.u
 console.log(`≈ ${estimate} distinct users`)
 ```
 
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `keyFn` | identity | Maps each item to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
+
 `estimator.addMany(values)` does the same for values already in the shape you
 want counted. `estimateDistinctSync` adds the `keyFn`, so the mapping happens as
 the values are read.
@@ -118,6 +131,10 @@ The pass is synchronous and runs to the end, so there is no `signal`: nothing
 else can run while it does.
 
 ## Async sources — `estimateDistinct`
+
+```ts
+estimateDistinct(estimator: CVM, source: AsyncIterable<any> | Readable, options?: EstimateOptions): Promise<CVMResult>
+```
 
 Counts a source that arrives over time and resolves to the result. It takes an
 async iterable or a `Readable`:
@@ -131,10 +148,19 @@ async function * rows () { /* yield one row at a time */ }
 const { estimate } = await estimateDistinct(estimator, rows(), { keyFn: (r) => r.userId })
 ```
 
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `keyFn` | identity | Maps each item to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
+| `signal` | — | An `AbortSignal` that stops the count. See [Cancelling](#cancelling). |
+
 Hand the same estimator to a second call and the count carries on: the result
 always covers everything that estimator has seen.
 
 ## Stream API — `createEstimatorSink`
+
+```ts
+createEstimatorSink(estimator: CVM, options?: EstimatorSinkOptions): EstimatorSink
+```
 
 A `Writable` sink you pipe into. The count is read from the estimator, once the
 pipe has finished:
@@ -162,16 +188,32 @@ const lines = createInterface({ input: createReadStream('access.log'), crlfDelay
 await pipeline(lines, createEstimatorSink(estimator))
 ```
 
-In object mode, the default, a write can be anything Node lets you write and is
-counted as it comes. With `objectMode: false` it must be a string or a Buffer,
-and arrives as a Buffer, which won't dedup against an identical one, so decode it
-in `keyFn`:
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `keyFn` | identity | Maps each chunk to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
+| `objectMode` | `true` | Counts each write as one value. With `false` a write must be a string or a Buffer, and arrives as a Buffer. |
+| `highWaterMark` | Node's own | Passed to the underlying `Writable`. Counts values in object mode, bytes otherwise. |
+| `signal` | — | An `AbortSignal` that stops the count. See [Cancelling](#cancelling). |
+
+A Buffer won't dedup against an identical one, so with `objectMode: false` decode
+it in `keyFn`:
 
 ```js
 createEstimatorSink(estimator, { objectMode: false, keyFn: (chunk) => chunk.toString() })
 ```
 
-`highWaterMark` is passed to the underlying `Writable`.
+## Cancelling
+
+`estimateDistinct` and `createEstimatorSink` take a `signal`, and fail on abort
+the way the rest of Node does: an `AbortError` with `code: 'ABORT_ERR'`, and the
+signal's own reason as its `cause`.
+
+```js
+await estimateDistinct(estimator, rows(), { signal: AbortSignal.timeout(50) })
+```
+
+Whatever was counted before the stop stays in your estimator, so a cancelled run
+can still be read, or saved and resumed.
 
 ## Key concepts
 
@@ -359,17 +401,6 @@ While counting, errors only come from your data source or your `keyFn`, and each
 travels on a single channel, the one that matches how you called it:
 `estimateDistinctSync` throws, `estimateDistinct` rejects, and a sink emits
 `'error'`, which also rejects `pipeline()` and `finished()`.
-
-**Cancelling.** `estimateDistinct` and `createEstimatorSink` take a `signal`, and fail on
-abort the way the rest of Node does: an `AbortError` with `code: 'ABORT_ERR'`,
-and the signal's own reason as its `cause`.
-
-```js
-await estimateDistinct(estimator, rows(), { signal: AbortSignal.timeout(50) })
-```
-
-Whatever was counted before the stop stays in your estimator, so a cancelled run
-can still be read, or saved and resumed.
 
 ## Benchmarks
 
