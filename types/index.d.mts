@@ -76,7 +76,7 @@ export interface CVMSnapshot {
   values: CountableValue[]
 }
 
-export interface EstimateSyncOptions {
+export interface EstimateSyncOptions<T = any> {
   /**
    * Maps each item to the value to count: a string, number, boolean or `null`.
    * The estimator dedups with a `Set`, so an object or array would be compared
@@ -84,10 +84,10 @@ export interface EstimateSyncOptions {
    * value of your choosing first, since `undefined` would count every item
    * lacking it as one and the same. Default: identity.
    */
-  keyFn?: (item: any) => CountableValue
+  keyFn?: (item: T) => CountableValue
 }
 
-export interface EstimateOptions extends EstimateSyncOptions {
+export interface EstimateOptions<T = any> extends EstimateSyncOptions<T> {
   /**
    * Stops the count: the promise rejects with an `AbortError` that has
    * `code: 'ABORT_ERR'`, and the signal's own reason as its `cause`. Whatever
@@ -96,7 +96,7 @@ export interface EstimateOptions extends EstimateSyncOptions {
   signal?: AbortSignal
 }
 
-export interface EstimatorSinkOptions {
+export interface EstimatorSinkOptions<T = any> {
   /**
    * Maps each chunk to the value to count: a string, number, boolean or `null`.
    * The estimator dedups with a `Set`, so an object or array would be compared
@@ -104,7 +104,7 @@ export interface EstimatorSinkOptions {
    * value of your choosing first, since `undefined` would count every chunk
    * lacking it as one and the same. Default: identity.
    */
-  keyFn?: (chunk: any) => CountableValue
+  keyFn?: (chunk: T) => CountableValue
   /**
    * Treats each write as one opaque value when `true` (the default, accepts any
    * type), or as bytes when `false`: a string, `Buffer`, `TypedArray` or
@@ -179,9 +179,9 @@ export interface EstimatorSink extends Writable {
  * Create a sink that feeds `estimator`. The estimator holds the count and the
  * parameters; the options cover only how values reach it.
  */
-export function createEstimatorSink(
+export function createEstimatorSink<T = any>(
   estimator: CVM,
-  options?: EstimatorSinkOptions
+  options?: EstimatorSinkOptions<T>
 ): EstimatorSink
 
 /**
@@ -191,10 +191,10 @@ export function createEstimatorSink(
  * The estimator keeps whatever it counted, so the same one can be handed to
  * further calls to carry a count across sources.
  */
-export function estimateDistinct(
+export function estimateDistinct<T = any>(
   estimator: CVM,
-  source: AsyncIterable<any> | Readable,
-  options?: EstimateOptions
+  source: AsyncIterable<T> | Readable,
+  options?: EstimateOptions<T>
 ): Promise<CVMResult>
 
 /**
@@ -202,10 +202,10 @@ export function estimateDistinct(
  * {@link CVM.result}. Runs to the end in one synchronous pass, so it takes no
  * `signal`; for a source that arrives over time use {@link estimateDistinct}.
  */
-export function estimateDistinctSync(
+export function estimateDistinctSync<T = any>(
   estimator: CVM,
-  source: Iterable<any>,
-  options?: EstimateSyncOptions
+  source: Iterable<T>,
+  options?: EstimateSyncOptions<T>
 ): CVMResult
 
 /**

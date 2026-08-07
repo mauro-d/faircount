@@ -35,7 +35,13 @@ const sink: EstimatorSink = createEstimatorSink(estimator, sinkOptions)
 const back: CVM = sink.estimator
 await pipeline(Readable.from(['a']), sink)
 
+interface Order { user: string, total: number }
+const orders: Order[] = [{ user: 'u1', total: 2 }]
+// The element type of the source reaches keyFn, so its fields are checked.
+const byUser: CVMResult = estimateDistinctSync(estimator, orders, { keyFn: (o) => o.user })
+const byTotal: EstimatorSink = createEstimatorSink<Order>(estimator, { keyFn: (o) => o.total })
+
 const capacity: number = computeThreshold(0.05, 0.01, 1000)
 const random: () => number = createRandom(7)
 
-void [result, code, reading, fromArray, fromSet, fromStream, fromAsync, back, capacity, random]
+void [result, code, reading, fromArray, fromSet, fromStream, fromAsync, back, byUser, byTotal, capacity, random]

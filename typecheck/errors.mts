@@ -25,3 +25,13 @@ createEstimatorSink(estimator, { delta: 0.1 })
 estimateDistinctSync(estimator, ['a'], { keyFn: (value: any) => ({ value }) })
 // @ts-expect-error the parameters are read-only
 estimator.threshold = 1
+
+interface Order { user: string, total: number }
+const orders: Order[] = [{ user: 'a', total: 1 }]
+// @ts-expect-error the keyFn parameter follows the source, so a missing field is caught
+estimateDistinctSync(estimator, orders, { keyFn: (o) => o.usr })
+async function * typedRows (): AsyncGenerator<Order> { yield { user: 'a', total: 1 } }
+// @ts-expect-error same on the async path
+await estimateDistinct(estimator, typedRows(), { keyFn: (r) => r.usr })
+// @ts-expect-error the sink takes its element type explicitly
+createEstimatorSink<Order>(estimator, { keyFn: (o) => o.usr })
