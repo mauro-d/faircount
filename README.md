@@ -53,7 +53,7 @@ estimate's expected value is exactly the true count.
 npm install faircount
 ```
 
-Requires Node 18 or newer. The package is ESM-only, has no runtime dependencies,
+Requires Node 20 or newer. The package is ESM-only, has no runtime dependencies,
 and includes TypeScript types.
 
 ## The estimator — `CVM`

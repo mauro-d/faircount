@@ -189,6 +189,9 @@ test('a signal already aborted stops before the first value', async () => {
     const err = await estimateDistinct(estimator, source, { signal: controller.signal }).catch((e) => e)
     assert.equal(err.code, 'ABORT_ERR')
     assert.equal(estimator.sampleCount, 0)
+    // A signal that fires mid-stream leaves the source destroyed; one that fired
+    // before the call has to end the same way.
+    if (source instanceof Readable) assert.equal(source.destroyed, true)
   }
 })
 

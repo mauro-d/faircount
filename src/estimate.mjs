@@ -8,8 +8,7 @@ const identity = (x) => x
 const isReadable = (source) =>
   source != null && typeof source.pipe === 'function' && typeof source.on === 'function'
 
-// The shape Node's own promise APIs reject with, so one `err.code` covers every
-// source kind.
+// Node's own shape, so one `err.code` covers every source kind.
 function abortError (signal) {
   const error = new Error('The operation was aborted', { cause: signal.reason })
   error.name = 'AbortError'
@@ -19,8 +18,8 @@ function abortError (signal) {
 
 const ABORTED = Symbol('aborted')
 
-// Resolves instead of rejecting, so a signal that fires after the loop is over
-// leaves no unhandled rejection behind. One listener for the whole run.
+// Resolves rather than rejects: a signal firing after the loop would otherwise
+// leave an unhandled rejection.
 function watchAbort (signal) {
   let onAbort
   const fired = new Promise((resolve) => {
@@ -30,10 +29,8 @@ function watchAbort (signal) {
   return { fired, release: () => signal.removeEventListener('abort', onAbort) }
 }
 
-// `return()` may be absent, may return a plain result object rather than a
-// promise, and may throw either way: `for await` tolerates all three, so this
-// has to as well. Whatever it does, the error already on its way out is the one
-// the caller should see.
+// `return()` may be missing, may not return a promise, and may throw either way.
+// Whatever it does, the error already on its way out is the one to keep.
 function closeQuietly (iterator) {
   try {
     Promise.resolve(iterator.return?.()).catch(() => {})
@@ -49,13 +46,11 @@ function checkArguments (estimator, keyFn) {
   }
 }
 
-// No `signal` here: a synchronous loop runs to its end whatever happens, and
-// Node's own *Sync functions take no signal either.
+// No `signal`: a synchronous pass runs to its end, and accepting one would leave
+// the caller believing the count can be stopped.
 export function estimateDistinctSync (estimator, source, options = {}) {
   const { keyFn = identity, signal } = options
   checkArguments(estimator, keyFn)
-  // Refused rather than ignored: a caller who passes one believes the count can
-  // be stopped, and a synchronous loop cannot be.
   if (signal !== undefined) {
     throw fail(TypeError, 'CVM_INVALID_OPTION',
       'estimateDistinctSync takes no signal: a synchronous pass runs to the end, use estimateDistinct for a source that can be stopped')
@@ -82,12 +77,12 @@ export async function estimateDistinct (estimator, source, options = {}) {
     throw fail(TypeError, 'CVM_INVALID_OPTION', 'signal must be an AbortSignal')
   }
 
-  // Piped, never iterated: with a Readable that hands over one value per read,
-  // `Readable.from` included, `for await` piles up a nextTick callback per value
-  // until the heap runs out. Reaching `pipeline` also lets it destroy the source
-  // when the signal fires, which is why the abort check below sits after it.
+  // Piped, never iterated: over a Readable that hands over one value per read,
+  // `for await` piles up a nextTick callback for each until the heap runs out.
+  // The signal goes to pipeline, not to the sink, so one mechanism covers an
+  // abort whenever it fires.
   if (isReadable(source)) {
-    await pipeline(source, createEstimatorSink(estimator, { keyFn, signal }))
+    await pipeline(source, createEstimatorSink(estimator, { keyFn }), { signal })
     return estimator.result()
   }
 
@@ -96,12 +91,11 @@ export async function estimateDistinct (estimator, source, options = {}) {
       'source must be async-iterable or a Readable; for values already in memory use estimateDistinctSync')
   }
 
+  // Only this path needs the check: pipeline covers the Readable one.
   if (signal?.aborted) throw abortError(signal)
 
-  // Driven by hand rather than with `for await` so each `next()` can be raced
-  // against the signal. Testing `aborted` between values only looks at it while
-  // the source is delivering, never while it is waiting, which is the one moment
-  // anyone aborts.
+  // Driven by hand, not with `for await`, so each `next()` is raced against the
+  // signal: a source suspended on an await is the one anyone aborts.
   const iterator = source[Symbol.asyncIterator]()
   const watch = signal ? watchAbort(signal) : null
   let exhausted = false
@@ -118,10 +112,8 @@ export async function estimateDistinct (estimator, source, options = {}) {
     }
   } finally {
     watch?.release()
-    // Asks the source to close so its own cleanup runs, without waiting for it:
-    // `return()` queues behind the `next()` still in flight, so awaiting it
-    // would hand back the delay the abort just avoided. The caller is released
-    // now, the source finishes closing when its pending step settles.
+    // Asked to close, not awaited: `return()` queues behind the `next()` still in
+    // flight, so waiting would hand back the delay the abort just avoided.
     if (!exhausted) closeQuietly(iterator)
   }
 
