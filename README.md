@@ -254,7 +254,7 @@ This is the same number you'd see as `threshold` in the `result()` of a `CVM`
 constructed with the same parameters. What those entries weigh in bytes depends
 on the values themselves (a number, a short string, a long composite key…), so
 it can't be derived from the parameters alone: for end-to-end measurements, see
-the [Benchmarks](#benchmarks) below.
+the [Benchmarks](#benchmarks).
 
 ## Counting by a key (`keyFn`)
 
