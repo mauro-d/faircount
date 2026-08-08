@@ -89,10 +89,11 @@ console.log(`≈ ${estimator.distinct} distinct values`)
 | `random` | `Math.random` | The randomness source: a function returning a float in `[0, 1)`. Overrides `seed`. |
 
 `add()` takes the value itself: there's no `keyFn` at this level, you pass
-whatever you want counted. `addMany()` takes an iterable of them. `distinct` and
-`sampleCount` read the current estimate and the number of values held at any
-point, without building a full result object; `result()` bundles both (as
-`estimate` and `samples`) with `threshold` and `p`.
+whatever you want counted. `addMany()` takes an iterable of those values, an
+array, a `Set`, a generator. `distinct` and `sampleCount` read the current
+estimate and the number of values held at any point, without building a full
+result object; `result()` bundles both (as `estimate` and `samples`) with
+`threshold` and `p`.
 
 The estimator is yours to keep: it can be saved and resumed, carried across
 several sources, and read at any moment. Every count you read covers everything
@@ -189,16 +190,9 @@ await pipeline(lines, createEstimatorSink(estimator))
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `keyFn` | identity | Maps each chunk to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
-| `objectMode` | `true` | Counts each write as one value. With `false` a write must be a string or a Buffer, and arrives as a Buffer. |
+| `objectMode` | `true` | Counts each write as one value. With `false` a write must be a string or a Buffer, and arrives as a Buffer, which no `Set` dedups against an identical one. |
 | `highWaterMark` | Node's own | Passed to the underlying `Writable`. Counts values in object mode, bytes otherwise. |
 | `signal` | — | An `AbortSignal` that stops the count. See [Cancelling](#cancelling). |
-
-A Buffer won't dedup against an identical one, so with `objectMode: false` decode
-it in `keyFn`:
-
-```js
-createEstimatorSink(estimator, { objectMode: false, keyFn: (chunk) => chunk.toString() })
-```
 
 ## Cancelling
 
@@ -258,10 +252,12 @@ the [Benchmarks](#benchmarks).
 
 ## Counting by a key (`keyFn`)
 
-All three counting functions accept a `keyFn` that maps each item to the value
-whose distinctness you want counted. It must return a **string, number, boolean
-or `null`**: the estimator dedups with a `Set`, so an object or an array would
-never dedup, and those four are also the values a snapshot can carry.
+`estimateDistinctSync`, `estimateDistinct` and `createEstimatorSink` accept a
+`keyFn` that maps each item to the value whose distinctness you want counted. It
+must return a **string, number, boolean or `null`**: the estimator dedups with a
+`Set`, so an object or an array would never dedup, and those four are also the
+values a snapshot can carry. The estimator itself takes no `keyFn`, `add()`
+counts what you hand it.
 
 Watch out for fields that may be missing. `keyFn: (o) => o.user` returns
 `undefined` for every record without a user, and the estimator counts all of
