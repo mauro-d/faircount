@@ -1,19 +1,9 @@
 import { createRandom } from './random.mjs'
+import { fail } from './fail.mjs'
 
 const DEFAULT_EPSILON = 0.05
 const DEFAULT_DELTA = 0.01
 const SNAPSHOT_VERSION = 1
-
-let warnedNoExpectedSize = false
-
-// Errors carry a `code` so callers can branch on it instead of matching message
-// text. The helper drops itself from the stack trace.
-export function fail (Type, code, message) {
-  const error = new Type(message)
-  error.code = code
-  Error.captureStackTrace(error, fail)
-  return error
-}
 
 // A restored value has to compare equal to the same value arriving later, or the
 // sample would count it twice.
@@ -34,11 +24,12 @@ export function computeThreshold (epsilon, delta, expectedSize) {
   if (typeof delta !== 'number' || !(delta > 0 && delta < 1)) {
     throw fail(RangeError, 'CVM_INVALID_OPTION', `delta must be a number in (0, 1), got ${delta}`)
   }
-  if (typeof expectedSize !== 'number' || !Number.isFinite(expectedSize) || expectedSize < 0) {
-    throw fail(RangeError, 'CVM_INVALID_OPTION', `expectedSize must be a non-negative finite number, got ${expectedSize}`)
+  // At least 1: the formula's ln(3m/δ) has nothing to say about a stream of
+  // length zero, and 0 used to be the sentinel for "not provided".
+  if (typeof expectedSize !== 'number' || !Number.isFinite(expectedSize) || expectedSize < 1) {
+    throw fail(RangeError, 'CVM_INVALID_OPTION', `expectedSize must be a finite number of at least 1, got ${expectedSize}`)
   }
-  const m = expectedSize > 0 ? expectedSize : 1
-  const n = Math.ceil((12 / (epsilon * epsilon)) * Math.log((3 * m) / delta))
+  const n = Math.ceil((12 / (epsilon * epsilon)) * Math.log((3 * expectedSize) / delta))
   return Math.max(2, n + (n % 2))
 }
 
@@ -49,56 +40,59 @@ export function computeThreshold (epsilon, delta, expectedSize) {
 // disappears. With no failed run to condition on, E[estimate] = F0 exactly.
 // Feed values with add(), read result(); values must be Set-comparable.
 export class CVM {
+  #epsilon
+  #delta
+  #expectedSize
+  #threshold
+  #p
+  #holes
+  #random
+  #X
+  #keep
+
   constructor (options = {}) {
     const {
       epsilon = DEFAULT_EPSILON,
       delta = DEFAULT_DELTA,
-      expectedSize = 0,
+      expectedSize,
       seed,
       random
     } = options
 
+    // Required: it is what makes the (ε, δ) bound true, and a default would pick
+    // one on the caller's behalf. Over-estimating costs a logarithm, so there is
+    // no number here that is safe to guess.
+    if (expectedSize === undefined) {
+      throw fail(TypeError, 'CVM_INVALID_OPTION', 'expectedSize is required: pass the stream length you expect, an upper bound is fine')
+    }
     if (random !== undefined && typeof random !== 'function') {
       throw fail(TypeError, 'CVM_INVALID_OPTION', 'random must be a function returning a float in [0, 1)')
     }
 
-    // computeThreshold validates epsilon, delta and expectedSize, so an invalid
-    // parameter throws here, before the warning below can fire.
-    this.threshold = computeThreshold(epsilon, delta, expectedSize)
+    this.#threshold = computeThreshold(epsilon, delta, expectedSize)
+    this.#epsilon = epsilon
+    this.#delta = delta
+    this.#expectedSize = expectedSize
 
-    // Optional, but omitting it sizes the threshold for a length-1 stream, which is
-    // too small for the (ε, δ) guarantee on a real one. Warn once instead of failing.
-    if (expectedSize === 0 && !warnedNoExpectedSize) {
-      warnedNoExpectedSize = true
-      process.emitWarning(
-        'faircount: expectedSize was not set; the (ε, δ) guarantee assumes it bounds the stream length. Pass it to size the threshold correctly.',
-        { code: 'CVM_NO_EXPECTED_SIZE' }
-      )
-    }
-
-    this.epsilon = epsilon
-    this.delta = delta
-    this.expectedSize = expectedSize
-
-    this._keep = this.threshold / 2
-    this._random = random ?? createRandom(seed)
-    this._X = new Set()
-    this._p = 1
-    this._holes = 0
+    this.#keep = this.#threshold / 2
+    this.#random = random ?? createRandom(seed)
+    this.#X = new Set()
+    this.#p = 1
+    this.#holes = 0
   }
 
   // Algorithm 3, lines 3-10: insert the element with probability p, remove it
   // otherwise; when the buffer fills up, keep a uniformly random half and halve p.
   add (element) {
-    if (this._random() < this._p) {
-      const X = this._X
+    if (this.#random() < this.#p) {
+      const X = this.#X
       X.add(element)
-      if (X.size === this.threshold) {
-        this._subsample()
-        this._p /= 2
+      if (X.size === this.#threshold) {
+        this.#subsample()
+        this.#p /= 2
       }
-    } else if (this._X.delete(element)) {
-      this._maybeCompact()
+    } else if (this.#X.delete(element)) {
+      this.#maybeCompact()
     }
     return this
   }
@@ -106,11 +100,11 @@ export class CVM {
   // Deleted entries stay in the Set's chains until it is rebuilt, so churn on
   // hot keys slows every lookup down. Rebuilding it here leaves membership,
   // order and randomness untouched, and averages out to nothing per delete.
-  _maybeCompact () {
-    this._holes++
-    if (this._holes >= this._X.size && this._holes >= 1024) {
-      this._X = new Set(this._X)
-      this._holes = 0
+  #maybeCompact () {
+    this.#holes++
+    if (this.#holes >= this.#X.size && this.#holes >= 1024) {
+      this.#X = new Set(this.#X)
+      this.#holes = 0
     }
   }
 
@@ -118,20 +112,20 @@ export class CVM {
   // shuffle the kept slots to the front, drop the rest). Each element is retained
   // with probability exactly ½, and once p is halved the estimate |X|/p is exactly
   // what it was before the sub-sample.
-  _subsample () {
-    const arr = [...this._X]
-    const keep = this._keep
+  #subsample () {
+    const arr = [...this.#X]
+    const keep = this.#keep
     const len = arr.length
     for (let i = 0; i < keep; i++) {
-      const j = i + Math.floor(this._random() * (len - i))
+      const j = i + Math.floor(this.#random() * (len - i))
       const tmp = arr[i]
       arr[i] = arr[j]
       arr[j] = tmp
     }
     const next = new Set()
     for (let i = 0; i < keep; i++) next.add(arr[i])
-    this._X = next
-    this._holes = 0
+    this.#X = next
+    this.#holes = 0
   }
 
   // Fast path for plain arrays: an indexed loop skips the iterator protocol. The
@@ -145,27 +139,43 @@ export class CVM {
     return this
   }
 
+  get epsilon () {
+    return this.#epsilon
+  }
+
+  get delta () {
+    return this.#delta
+  }
+
+  get expectedSize () {
+    return this.#expectedSize
+  }
+
+  get threshold () {
+    return this.#threshold
+  }
+
   get distinct () {
-    return this._X.size / this._p
+    return this.#X.size / this.#p
   }
 
   get sampleCount () {
-    return this._X.size
+    return this.#X.size
   }
 
   result () {
     return {
-      estimate: this._X.size / this._p,
-      samples: this._X.size,
-      threshold: this.threshold,
-      p: this._p
+      estimate: this.#X.size / this.#p,
+      samples: this.#X.size,
+      threshold: this.#threshold,
+      p: this.#p
     }
   }
 
   // State as a plain object, ready for JSON.stringify (which calls this method
   // on its own). Its size is bounded by the threshold, like memory.
   toJSON () {
-    const values = [...this._X]
+    const values = [...this.#X]
     for (let i = 0; i < values.length; i++) {
       if (!isRestorable(values[i])) {
         throw fail(TypeError, 'CVM_UNSERIALIZABLE_VALUE', `values must be a string, a finite number, a boolean or null to be saved, got ${String(values[i])}`)
@@ -173,11 +183,11 @@ export class CVM {
     }
     return {
       version: SNAPSHOT_VERSION,
-      epsilon: this.epsilon,
-      delta: this.delta,
-      expectedSize: this.expectedSize,
-      threshold: this.threshold,
-      p: this._p,
+      epsilon: this.#epsilon,
+      delta: this.#delta,
+      expectedSize: this.#expectedSize,
+      threshold: this.#threshold,
+      p: this.#p,
       values
     }
   }
@@ -194,6 +204,9 @@ export class CVM {
     }
 
     const { epsilon, delta, expectedSize, threshold, p, values } = snapshot
+    if (typeof expectedSize !== 'number' || expectedSize < 1) {
+      throw fail(TypeError, 'CVM_INVALID_SNAPSHOT', `snapshot expectedSize must be a number of at least 1, got ${expectedSize}`)
+    }
     // The constructor validates the parameters and recomputes the threshold, so a
     // mismatch means the snapshot no longer describes the state it carries.
     const cvm = new CVM({ epsilon, delta, expectedSize })
@@ -221,15 +234,15 @@ export class CVM {
       throw fail(RangeError, 'CVM_INVALID_SNAPSHOT', 'snapshot values contain duplicates')
     }
 
-    cvm._X = restored
-    cvm._p = p
+    cvm.#X = restored
+    cvm.#p = p
     return cvm
   }
 
   reset () {
-    this._X = new Set()
-    this._p = 1
-    this._holes = 0
+    this.#X = new Set()
+    this.#p = 1
+    this.#holes = 0
     return this
   }
 }

@@ -3,17 +3,26 @@
 [![CI](https://github.com/mauro-d/faircount/actions/workflows/ci.yml/badge.svg)](https://github.com/mauro-d/faircount/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/faircount)](https://www.npmjs.com/package/faircount)
 
-Count the distinct values in a stream using only a small, fixed amount of memory.
-The result is an **estimate**, and a *fair* one: unbiased, so it is right on
-average, with proven bounds on how far off a single run may land and on how
+Count the distinct values in a stream using only a small, bounded amount of
+memory. The result is an **estimate**, and a *fair* one: unbiased, so it is right
+on average, with proven bounds on how far off a single run may land and on how
 often that can happen.
 
 Counting every value exactly means remembering each one you see, so memory grows
 with how many distinct values appear. This library keeps a bounded random sample
-instead and extrapolates from it: memory stays flat whether the stream holds a
-thousand distinct values or a billion. You choose how close the estimate should be
-(`epsilon`) and how often it may miss that target (`delta`). See
-[Key concepts](#key-concepts) for the guarantees.
+instead and extrapolates from it: the sample never grows past a capacity you fix
+in advance, whether the stream holds a thousand distinct values or a billion. You
+choose how close the estimate should be (`epsilon`) and how often it may miss
+that target (`delta`).
+
+**Whether it pays off depends on how many distinct values you expect**, and the
+line is the sample's capacity, its *threshold*. Below it nothing is ever sampled
+away: the sample holds every distinct value, so the count is exact and there is
+nothing to save: a `Set` does the same job more simply. Above it the sample stops
+growing while a `Set` keeps going.
+`computeThreshold(epsilon, delta, expectedSize)` gives you that crossover for
+your own parameters, before counting anything: with the defaults over a stream
+of a million items it lands at 93 694 distinct values.
 
 This library is a faithful implementation of the CVM algorithm (Chakraborty,
 Vinodchandran & Meel, [2022](https://arxiv.org/abs/2301.10191)), specifically the
@@ -24,16 +33,17 @@ estimate's expected value is exactly the true count.
 ## Contents
 
 - [Install](#install)
-- [Promise API — `estimateDistinct`](#promise-api--estimatedistinct)
-- [Stream API — `DistinctEstimateStream`](#stream-api--distinctestimatestream)
-- [Core engine — `CVM`](#core-engine--cvm)
+- [The estimator — `CVM`](#the-estimator--cvm)
+- [Sync sources — `estimateDistinctSync`](#sync-sources--estimatedistinctsync)
+- [Async sources — `estimateDistinct`](#async-sources--estimatedistinct)
+- [Stream API — `createEstimatorSink`](#stream-api--createestimatorsink)
+- [Cancelling](#cancelling)
+- [Key concepts](#key-concepts)
 - [Counting by a key (`keyFn`)](#counting-by-a-key-keyfn)
-- [Options](#options)
 - [Result](#result)
 - [Reproducible randomness](#reproducible-randomness)
 - [Saving and resuming](#saving-and-resuming)
 - [Errors](#errors)
-- [Key concepts](#key-concepts)
 - [Benchmarks](#benchmarks)
 - [References](#references)
 - [License](#license)
@@ -44,82 +54,210 @@ estimate's expected value is exactly the true count.
 npm install faircount
 ```
 
-Requires Node 18 or newer. The library is published as ES modules only and has no
-runtime dependencies. TypeScript types are included.
+Requires Node 20 or newer. The package is ESM-only, has no runtime dependencies,
+and includes TypeScript types.
 
-## Promise API — `estimateDistinct`
+## The estimator — `CVM`
 
-Accepts a sync iterable (`Array`, `Set`, …), an async iterable, or a `Readable`
-you already have, and resolves to the result:
-
-```js
-import { estimateDistinct } from 'faircount'
-
-const { estimate } = await estimateDistinct(values, {
-  epsilon: 0.05,          // accuracy: within ±5% of the true count
-  delta: 0.01,            // reliability: may land outside ±5% at most 1% of the time
-  expectedSize: 1_000_000 // expected stream length; an upper bound is fine
-})
-
-console.log(`≈ ${estimate} distinct values`)
+```ts
+new CVM(options: CVMOptions)
 ```
 
-## Stream API — `DistinctEstimateStream`
-
-A `Writable` sink in object mode (write one value per chunk), for composing
-multiple stream stages via `pipeline()` (parsing, decompression, other
-transforms feeding it). Read the result once it has finished:
-
-```js
-import { pipeline } from 'node:stream/promises'
-import { DistinctEstimateStream } from 'faircount'
-
-const counter = new DistinctEstimateStream({ epsilon: 0.05, expectedSize: 1_000_000 })
-await pipeline(values, counter) // values: your source stream
-
-console.log(counter.result()) // { estimate, samples, threshold, p }
-```
-
-In the default object mode, each write is one value, taken as-is and of any type
-Node lets you write (everything but `null`, which ends a stream).
-If your source is a byte stream of raw strings or Buffers, set
-`objectMode: false` to feed it directly. Each write then arrives as a Buffer,
-which won't dedup against an identical one, so decode it in `keyFn`:
-
-```js
-new DistinctEstimateStream({ objectMode: false, keyFn: (chunk) => chunk.toString() })
-```
-
-## Core engine — `CVM`
-
-Drive the algorithm yourself. The core does no I/O:
+Everything starts with an estimator. It holds the parameters, the sample and the
+count, and you feed it values:
 
 ```js
 import { CVM } from 'faircount'
 
-const cvm = new CVM({ epsilon: 0.05, expectedSize: 1_000_000 })
-for (const value of values) {
-  cvm.add(value)
-  console.log(cvm.distinct) // updates as values come in
-}
+const estimator = new CVM({
+  expectedSize: 1_000_000, // how many items you expect; an upper bound is fine
+  epsilon: 0.05,           // accuracy: within ±5% of the true count
+  delta: 0.01              // reliability: may land outside ±5% at most 1% of the time
+})
 
-console.log(cvm.result())  // estimate + internal state
+for (const value of values) estimator.add(value)
+
+console.log(`≈ ${estimator.distinct} distinct values`)
 ```
 
-`cvm.distinct` and `cvm.sampleCount` read the current estimate and the number of
-values held at any point, without building a full result object; `cvm.result()`
-bundles both (as `estimate` and `samples`) with `threshold` and `p`.
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `expectedSize` | required, ≥ 1 | About how many items the stream has. An upper bound is fine, and safe: it enters through a logarithm, so over-estimating a thousandfold costs about a third more memory and nothing in accuracy. |
+| `epsilon` | `0.05` | How close the estimate should be, as a fraction: `0.05` = ±5%. Smaller is more accurate but uses more memory. |
+| `delta` | `0.01` | How often a run may land outside ±`epsilon`: `0.01` = at most 1% of the time. |
+| `seed` | — | Integer seed for the built-in generator; set it for [reproducible runs](#reproducible-randomness). Leave unset for fresh randomness each run. |
+| `random` | `Math.random` | The randomness source: a function returning a float in `[0, 1)`. Overrides `seed`. |
 
-There's no `keyFn` here: pass `add()` whatever value you want counted.
+`add()` takes the value itself: there's no `keyFn` at this level, you pass
+whatever you want counted. `addMany()` takes an iterable of those values, an
+array, a `Set`, a generator. `distinct` and `sampleCount` read the current
+estimate and the number of values held at any point, without building a full
+result object; `result()` bundles both (as `estimate` and `samples`) with
+`threshold` and `p`.
+
+The estimator is yours to keep: it can be saved and resumed, carried across
+several sources, and read at any moment. Every count you read covers everything
+it has seen, not just the last source you handed it.
+
+The three functions below don't replace the estimator, they feed it.
+
+## Sync sources — `estimateDistinctSync`
+
+```ts
+estimateDistinctSync(estimator: CVM, source: Iterable<any>, options?: EstimateSyncOptions): CVMResult
+```
+
+Counts an iterable you already hold and returns the result:
+
+```js
+import { CVM, estimateDistinctSync } from 'faircount'
+
+const estimator = new CVM({ epsilon: 0.05, expectedSize: orders.length })
+const { estimate } = estimateDistinctSync(estimator, orders, { keyFn: (o) => o.user })
+
+console.log(`≈ ${estimate} distinct users`)
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `keyFn` | identity | Maps each item to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
+
+`estimator.addMany(values)` does the same for values already in the shape you
+want counted. `estimateDistinctSync` adds the `keyFn`, so the mapping happens as
+the values are read.
+
+The pass is synchronous and runs to the end, so there is no `signal`: nothing
+else can run while it does.
+
+## Async sources — `estimateDistinct`
+
+```ts
+estimateDistinct(estimator: CVM, source: AsyncIterable<any> | Readable, options?: EstimateOptions): Promise<CVMResult>
+```
+
+Counts a source that arrives over time and resolves to the result. It takes an
+async iterable or a `Readable`:
+
+```js
+import { CVM, estimateDistinct } from 'faircount'
+
+const estimator = new CVM({ epsilon: 0.05, expectedSize: 1_000_000 })
+
+async function * rows () { /* yield one row at a time */ }
+const { estimate } = await estimateDistinct(estimator, rows(), { keyFn: (r) => r.userId })
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `keyFn` | identity | Maps each item to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
+| `signal` | — | An `AbortSignal` that stops the count. See [Cancelling](#cancelling). |
+
+Hand the same estimator to a second call and the count carries on: the result
+always covers everything that estimator has seen.
+
+## Stream API — `createEstimatorSink`
+
+```ts
+createEstimatorSink(estimator: CVM, options?: EstimatorSinkOptions): EstimatorSink
+```
+
+A `Writable` sink you pipe into. The count is read from the estimator, once the
+pipe has finished:
+
+```js
+import { pipeline } from 'node:stream/promises'
+import { CVM, createEstimatorSink } from 'faircount'
+
+const estimator = new CVM({ epsilon: 0.05, expectedSize: 1_000_000 })
+await pipeline(values, createEstimatorSink(estimator)) // values: your source stream
+
+console.log(estimator.result()) // { estimate, samples, threshold, p }
+```
+
+The sink carries it as `sink.estimator`, for code that receives the sink without
+having built it.
+
+The sink counts one value per write, so whatever decides where one value ends and
+the next begins belongs upstream of it:
+
+```js
+import { createInterface } from 'node:readline'
+
+const lines = createInterface({ input: createReadStream('access.log'), crlfDelay: Infinity })
+await pipeline(lines, createEstimatorSink(estimator))
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `keyFn` | identity | Maps each chunk to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
+| `objectMode` | `true` | Counts each write as one value. With `false` a write must be a string or a Buffer, and arrives as a Buffer, which no `Set` dedups against an identical one. |
+| `highWaterMark` | Node's own | Passed to the underlying `Writable`. Counts values in object mode, bytes otherwise. |
+| `signal` | — | An `AbortSignal` that stops the count. See [Cancelling](#cancelling). |
+
+## Cancelling
+
+`estimateDistinct` and `createEstimatorSink` take a `signal`, and fail on abort
+the way the rest of Node does: an `AbortError` with `code: 'ABORT_ERR'`, and the
+signal's own reason as its `cause`.
+
+```js
+await estimateDistinct(estimator, rows(), { signal: AbortSignal.timeout(50) })
+```
+
+Whatever was counted before the stop stays in your estimator, so a cancelled run
+can still be read, or saved and resumed.
+
+## Key concepts
+
+The quantity being estimated is `F0`, the number of distinct values in a stream.
+
+- **Bounded memory.** Instead of remembering every distinct value, the algorithm
+  keeps a random sample capped at `n = ⌈(12/ε²)·ln(3m/δ)⌉` entries (rounded up
+  to an even number; `O((1/ε²)·log(m/δ))` space), however many distinct values
+  appear. `m` (`expectedSize`) enters only through a logarithm, so a rough upper
+  bound is enough.
+- **`(ε, δ)` guarantee.** With probability at least `1 − δ`, the estimate differs
+  from `F0` by at most `ε·F0` (a relative error of at most `ε`). That bound is a
+  formally proved worst case, and the errors measured in
+  [Benchmarks](#benchmarks) sit well inside it.
+- **Total and unbiased.** The algorithm never fails (no `⊥`, the rare give-up
+  outcome the original algorithm can return), and the expected value of its
+  result is exactly `F0`: no systematic over- or under-counting.
+
+**What if the stream turns out longer than `expectedSize`?** Nothing breaks and
+nothing warns you: the estimate stays unbiased, and only the `±epsilon` bound
+loosens, with the square root of a logarithm. Declaring a million items and
+receiving a billion, a thousandfold overshoot, moves the real epsilon from 0.0500
+to 0.0582.
+That is why over-estimating is the safe direction, and why `expectedSize` counts
+the whole life of an estimator, across every source and every resumed session,
+not one run.
+
+**How much memory will this cost?** `computeThreshold(epsilon, delta, expectedSize)`
+takes the same three parameters as [the estimator](#the-estimator--cvm) and returns that
+capacity, a **count of values held**, so you can size a run before starting it:
+
+```js
+import { computeThreshold } from 'faircount'
+
+computeThreshold(0.05, 0.01, 1_000_000)  // 93694 values held at most
+computeThreshold(0.025, 0.01, 1_000_000) // 374772, about 4x: the threshold scales as 1/epsilon²
+```
+
+This is the same number you'd see as `threshold` in the `result()` of a `CVM`
+constructed with the same parameters. What those entries weigh in bytes depends
+on the values themselves (a number, a short string, a long composite key…), so
+it can't be derived from the parameters alone: for end-to-end measurements, see
+the [Benchmarks](#benchmarks).
 
 ## Counting by a key (`keyFn`)
 
-Your source doesn't have to emit plain values directly. When it emits objects,
-both `estimateDistinct` and `DistinctEstimateStream` accept a `keyFn` that maps
-each item to the value whose distinctness you actually want to count. It must
-return a **string, number, boolean or `null`**: the engine dedups with a `Set`,
-so objects and arrays would be compared by reference and never dedup, and those
-four are also the values a snapshot can carry.
+`estimateDistinctSync`, `estimateDistinct` and `createEstimatorSink` accept a
+`keyFn` that maps each item to the value whose distinctness you want counted. It
+must return a **string, number, boolean or `null`**: the estimator dedups with a
+`Set`, so an object or an array would never dedup, and those four are also the
+values a snapshot can carry. The estimator itself takes no `keyFn`, `add()`
+counts what you hand it.
 
 Watch out for fields that may be missing. `keyFn: (o) => o.user` returns
 `undefined` for every record without a user, and the estimator counts all of
@@ -129,10 +267,10 @@ keeps them apart.
 
 ```js
 // distinct users
-await estimateDistinct(orders, { keyFn: (o) => o.user })
+estimateDistinctSync(estimator, orders, { keyFn: (o) => o.user })
 
 // composite key
-await estimateDistinct(orders, { keyFn: (o) => makeYourKey(o.user, o.product) })
+estimateDistinctSync(estimator, orders, { keyFn: (o) => makeYourKey(o.user, o.product) })
 ```
 
 You write `makeYourKey` yourself: combine whatever fields define distinctness
@@ -140,18 +278,6 @@ for your data into one value that never collides for two genuinely different
 inputs. Naive concatenation and `JSON.stringify` both have sharp edges (e.g. in
 a JSON array `null`, `undefined`, and `NaN` all serialize to `null`), so test
 your encoding against your actual data.
-
-## Options
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `epsilon` | `0.05` | How close the estimate should be, as a fraction: `0.05` = ±5%. Smaller is more accurate but uses more memory. |
-| `delta` | `0.01` | How often a run may land outside ±`epsilon`: `0.01` = at most 1% of the time. |
-| `expectedSize` | `0` | About how many items the stream has (an upper bound is fine). Optional, but omitting it triggers a warning. |
-| `seed` | — | Integer seed for the built-in generator; set it for reproducible runs. Leave unset for fresh randomness each run. |
-| `random` | `Math.random` | The randomness source: a function returning a float in `[0, 1)`. Overrides `seed`. |
-| `keyFn` | identity | (Promise & Stream APIs) Maps each item to the value to count. |
-| `signal` | — | (Promise & Stream APIs) An `AbortSignal` that stops the count. See [Errors](#errors). |
 
 ## Result
 
@@ -164,9 +290,11 @@ your encoding against your actual data.
 }
 ```
 
-If the stream has fewer distinct values than `threshold`, nothing is ever dropped
-and the result is exact. Otherwise it's an estimate: randomness inside the
-algorithm makes it vary slightly between runs, unless you set a `seed`.
+`estimate` is the answer; the other three say how it was reached, and you can
+ignore them until you need to know. If the stream has fewer distinct values than
+`threshold`, nothing is ever dropped, `p` stays at 1 and the count is exact.
+Otherwise it's an estimate: randomness inside the algorithm makes it vary
+slightly between runs, unless you set a `seed`.
 
 ## Reproducible randomness
 
@@ -206,110 +334,72 @@ so a long count survives a restart:
 import { writeFile, readFile } from 'node:fs/promises'
 import { CVM } from 'faircount'
 
-const cvm = new CVM({ epsilon: 0.05, expectedSize: 1_000_000 })
-cvm.addMany(todaysBatch)
-await writeFile('checkpoint.json', JSON.stringify(cvm)) // calls cvm.toJSON()
+const estimator = new CVM({ epsilon: 0.05, expectedSize: 1_000_000 })
+estimator.addMany(firstBatch)
+await writeFile('checkpoint.json', JSON.stringify(estimator)) // calls toJSON()
 
 // later, in another process
 const resumed = CVM.fromJSON(JSON.parse(await readFile('checkpoint.json', 'utf8')))
-resumed.addMany(tomorrowsBatch)
+resumed.addMany(nextBatch)
 console.log(resumed.result())
 ```
 
 The snapshot carries the parameters along with the sampled values, so `fromJSON`
 takes nothing else. Its size is bounded by `threshold`, the same bound that keeps
-memory flat, and `fromJSON` rejects a snapshot whose parts don't agree. This is a
-core-engine feature: the promise and stream APIs count from start to finish in
-one go.
+the sample from growing, and `fromJSON` rejects a snapshot whose parts don't agree.
 
-Three things to know:
+The other three count into that same estimator, so they save the same way:
+
+```js
+estimateDistinctSync(estimator, firstBatch)
+await estimateDistinct(estimator, rows(), { keyFn: (r) => r.userId })
+await pipeline(nextBatch, createEstimatorSink(estimator))
+await writeFile('checkpoint.json', JSON.stringify(estimator))
+```
+
+Replaying values the estimator has already counted doesn't bias the result: the
+estimate is unbiased for any stream, and repeats don't change how many distinct
+values a stream holds. You won't get the same number as before, but it is drawn
+around the same count. Values it never sees are a real loss, because the estimate
+is then unbiased for the part it saw rather than for the whole. So after a
+restart, overlapping is safer than leaving a gap.
+
+Two things to know:
 
 - Values have to come back from JSON unchanged, or a value arriving after the
   restore would no longer match its own earlier copy. `toJSON()` accepts
   strings, finite numbers, booleans and `null`, and throws on anything else
   (`bigint`, `symbol`, `NaN`, objects).
 - Counting resumes with fresh randomness. A `seed` set before the snapshot does
-  not carry across it: the estimate stays unbiased and within the same bounds,
-  but a resumed run is not a replay of the original.
-- `expectedSize` covers the whole count, not one session. It sized the threshold
-  when the estimator was first created, so if the resumed run takes the total
-  past it, the run lands outside `±epsilon` more often than `delta` allows,
-  roughly in proportion to how far past. Give it the total you expect across all
-  sessions.
+  not carry across it, so a resumed run is not a replay of the original. The
+  estimate stays unbiased either way; the `±epsilon` bound holds as long as
+  `expectedSize` still covers the total.
 
 ## Errors
 
 The algorithm never fails (it is total), so counting itself never throws.
 Invalid options throw a `RangeError` or a `TypeError` when the estimator is
-created (in the Promise API the returned promise rejects instead), and so do
-`toJSON` on a value JSON would alter and `fromJSON` on a snapshot whose parts
-don't agree. Each of those carries a `code`, so you can branch on it rather than
-on the message:
+created (`estimateDistinct` rejects instead, being async), and so do `toJSON` on
+a value JSON would alter and `fromJSON` on a snapshot whose parts don't agree.
+Each of those carries a `code`, so you can branch on it rather than on the
+message:
 
 | `code` | Raised when |
 | --- | --- |
-| `CVM_INVALID_OPTION` | an option is out of range or of the wrong type |
-| `CVM_INVALID_SOURCE` | `estimateDistinct` got something it cannot iterate |
+| `CVM_INVALID_OPTION` | an option is out of range or of the wrong type, or the estimator handed to a function is not a `CVM` |
+| `CVM_INVALID_SOURCE` | a source went to the wrong function, or is not iterable at all |
 | `CVM_INVALID_SNAPSHOT` | a snapshot given to `fromJSON` contradicts itself |
 | `CVM_UNSERIALIZABLE_VALUE` | `toJSON` holds a value JSON would alter |
 
-While counting, errors only come from your data source or your `keyFn`, and
-travel on a single channel:
-
-- **Promise API** — the promise rejects.
-- **Stream API** — the `'error'` event fires, which also rejects `pipeline()` / `finished()`.
-
-**Cancelling.** Both APIs take a `signal`, and fail on abort the way the rest of
-Node does: an `AbortError` with `code: 'ABORT_ERR'`, and the signal's own reason
-as its `cause`.
-
-```js
-await estimateDistinct(pages, { expectedSize: 1_000_000, signal: AbortSignal.timeout(50) })
-```
-
-An array or any other synchronous source can only be stopped before it starts,
-because nothing else runs until the loop finishes. And a cancelled promise loses
-the partial count, while the stream API keeps it: `counter.result()` still
-reports what was counted before the stop.
-
-## Key concepts
-
-The quantity being estimated is `F0`, the number of distinct values in a stream.
-
-- **Bounded memory.** Instead of remembering every distinct value, the algorithm
-  keeps a random sample capped at `n = ⌈(12/ε²)·ln(3m/δ)⌉` entries (rounded up
-  to an even number; `O((1/ε²)·log(m/δ))` space), however many distinct values
-  appear. `m` (`expectedSize`) enters only through a logarithm, so a rough upper
-  bound is enough.
-- **`(ε, δ)` guarantee.** With probability at least `1 − δ`, the estimate differs
-  from `F0` by at most `ε·F0` (a relative error of at most `ε`). That bound is a
-  formally proved worst case; in practice the estimate is usually much closer.
-- **Total and unbiased.** The algorithm never fails (no `⊥`, the rare give-up
-  outcome the original algorithm can return), and the expected value of its
-  result is exactly `F0`: no systematic over- or under-counting.
-
-**How much memory will this cost?** `computeThreshold(epsilon, delta, expectedSize)`
-takes the same three parameters from [Options](#options) and returns that
-capacity, a **count of values held**, so you can size a run before starting it:
-
-```js
-import { computeThreshold } from 'faircount'
-
-computeThreshold(0.05, 0.01, 1_000_000)  // 93694 values held at most
-computeThreshold(0.025, 0.01, 1_000_000) // 374772, about 4x: the threshold scales as 1/epsilon²
-```
-
-This is the same number you'd see as `threshold` in the `result()` of a `CVM`
-constructed with the same parameters. What those entries weigh in bytes depends
-on the values themselves (a number, a short string, a long composite key…), so
-it can't be derived from the parameters alone: for end-to-end measurements, see
-the [Benchmarks](#benchmarks) below.
+While counting, errors only come from your data source or your `keyFn`, and each
+travels on a single channel, the one that matches how you called it:
+`estimateDistinctSync` throws, `estimateDistinct` rejects, and a sink emits
+`'error'`, which also rejects `pipeline()` and `finished()`.
 
 ## Benchmarks
 
-These numbers come from real runs and are meant to give a feel for the
-trade-off in practice. They don't prove the algorithm is correct: the paper
-does that.
+These numbers come from real runs and give a feel for the trade-off. They don't
+prove the algorithm is correct: the paper does that.
 
 Memory and time as scale grows, with epsilon=0.05 and delta=0.01 fixed:
 

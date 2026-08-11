@@ -1,7 +1,7 @@
 {
   "name": "faircount",
   "version": "0.4.0",
-  "description": "An honest estimate of how many distinct values a stream contains — the unbiased CVM variant, with proven (ε, δ) error bounds in flat memory. Stream, promise and core APIs.",
+  "description": "An honest estimate of how many distinct values a stream contains \u2014 the unbiased CVM variant, with proven (\u03b5, \u03b4) error bounds and a sample of bounded size. One estimator, fed directly or from any source, in memory or streamed.",
   "type": "module",
   "main": "./src/index.mjs",
   "module": "./src/index.mjs",
@@ -20,7 +20,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "test": "node --test",
@@ -28,7 +28,8 @@
     "lint": "standard",
     "lint:fix": "standard --fix",
     "bench": "node bench/index.mjs",
-    "prepublishOnly": "npm run lint && npm test"
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test",
+    "typecheck": "tsc -p typecheck"
   },
   "keywords": [
     "cvm",
@@ -56,7 +57,9 @@
   "author": "Mauro <mauro.doganieri@gmail.com>",
   "license": "ISC",
   "devDependencies": {
-    "standard": "^17.1.2"
+    "@types/node": "^26.1.2",
+    "standard": "^17.1.2",
+    "typescript": "^5.9.3"
   },
   "standard": {
     "ignore": [

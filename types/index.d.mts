@@ -17,25 +17,25 @@ type CountableValue = string | number | boolean | null
 export type CVMErrorCode =
   /** An option is out of range or of the wrong type. */
   | 'CVM_INVALID_OPTION'
-  /** `estimateDistinct` was handed something it cannot iterate. */
+  /** A source went to the wrong counting function, or is not iterable at all. */
   | 'CVM_INVALID_SOURCE'
   /** A snapshot given to `fromJSON` contradicts itself. */
   | 'CVM_INVALID_SNAPSHOT'
   /** A held value would not survive `toJSON` unchanged. */
   | 'CVM_UNSERIALIZABLE_VALUE'
 
-/** Parameters shared by the core, the stream, and `estimateDistinct`. */
+/** The estimator's own parameters. Only `new CVM()` takes them. */
 export interface CVMOptions {
+  /**
+   * How many items the stream is expected to hold, at least 1. Required: it is
+   * what makes the `(ε, δ)` bound true, and it enters only through a logarithm,
+   * so an upper bound is fine and over-estimating is cheap.
+   */
+  expectedSize: number
   /** How close the estimate should be, as a fraction (`0.05` = ±5%). Default `0.05`. */
   epsilon?: number
   /** How often a run may land outside ±`epsilon` (`0.01` = at most 1%). Default `0.01`. */
   delta?: number
-  /**
-   * Expected/upper-bound stream length `m` (logarithmic effect). Optional, but
-   * omitting it sizes the threshold for a length-1 stream and emits a one-time
-   * `CVM_NO_EXPECTED_SIZE` process warning.
-   */
-  expectedSize?: number
   /**
    * Integer seed for the built-in generator: with the same seed and data, the
    * estimate is identical on every run. The trade-off: repeated runs share one
@@ -48,7 +48,10 @@ export interface CVMOptions {
 
 /** The estimate and the state it came from. */
 export interface CVMResult {
-  /** The estimated number of distinct values. */
+  /**
+   * The estimated number of distinct values the estimator has seen, across every
+   * source it has been given, not only the one that produced this result.
+   */
   estimate: number
   /** How many values are held. */
   samples: number
@@ -73,7 +76,7 @@ export interface CVMSnapshot {
   values: CountableValue[]
 }
 
-export interface EstimateOptions extends CVMOptions {
+export interface EstimateSyncOptions<T = any> {
   /**
    * Maps each item to the value to count: a string, number, boolean or `null`.
    * The estimator dedups with a `Set`, so an object or array would be compared
@@ -81,18 +84,19 @@ export interface EstimateOptions extends CVMOptions {
    * value of your choosing first, since `undefined` would count every item
    * lacking it as one and the same. Default: identity.
    */
-  keyFn?: (item: any) => CountableValue
+  keyFn?: (item: T) => CountableValue
+}
+
+export interface EstimateOptions<T = any> extends EstimateSyncOptions<T> {
   /**
    * Stops the count: the promise rejects with an `AbortError` that has
-   * `code: 'ABORT_ERR'`, and the signal's own reason as its `cause`. An array or
-   * other synchronous source can only be stopped before it starts, since nothing
-   * else runs until the loop finishes. You lose the partial estimate; the stream
-   * API keeps it.
+   * `code: 'ABORT_ERR'`, and the signal's own reason as its `cause`. Whatever
+   * was counted before the stop stays in the estimator.
    */
   signal?: AbortSignal
 }
 
-export interface DistinctEstimateStreamOptions extends CVMOptions {
+export interface EstimatorSinkOptions<T = any> {
   /**
    * Maps each chunk to the value to count: a string, number, boolean or `null`.
    * The estimator dedups with a `Set`, so an object or array would be compared
@@ -100,7 +104,7 @@ export interface DistinctEstimateStreamOptions extends CVMOptions {
    * value of your choosing first, since `undefined` would count every chunk
    * lacking it as one and the same. Default: identity.
    */
-  keyFn?: (chunk: any) => CountableValue
+  keyFn?: (chunk: T) => CountableValue
   /**
    * Treats each write as one opaque value when `true` (the default, accepts any
    * type), or as bytes when `false`: a string, `Buffer`, `TypedArray` or
@@ -118,7 +122,7 @@ export interface DistinctEstimateStreamOptions extends CVMOptions {
   /**
    * Stops the count: the stream emits an `AbortError` that has
    * `code: 'ABORT_ERR'`, which also rejects `pipeline()`. Whatever was counted
-   * before the stop stays readable through {@link DistinctEstimateStream.result}.
+   * before the stop stays in the estimator.
    */
   signal?: AbortSignal
 }
@@ -131,7 +135,7 @@ export interface DistinctEstimateStreamOptions extends CVMOptions {
  * by reference.
  */
 export class CVM {
-  constructor(options?: CVMOptions)
+  constructor(options: CVMOptions)
   readonly epsilon: number
   readonly delta: number
   readonly expectedSize: number
@@ -162,32 +166,52 @@ export class CVM {
 }
 
 /**
- * A `Writable` sink that estimates distinct values written to it (object mode:
- * one value per write). Read {@link DistinctEstimateStream.result} once it has
- * finished. Errors surface once via the `'error'` event.
+ * A `Writable` sink that records every value written to it in an estimator
+ * (object mode: one value per write). Read the count from that estimator, once
+ * the pipe has finished. Errors surface once via the `'error'` event.
  */
-export class DistinctEstimateStream extends Writable {
-  constructor(options?: DistinctEstimateStreamOptions)
-  result(): CVMResult
-  /** The estimated number of distinct values. */
-  get distinct(): number
-  /** The maximum number of values the sample can hold. */
-  get threshold(): number
+export interface EstimatorSink extends Writable {
+  /** The estimator being fed, the one passed to {@link createEstimatorSink}. */
+  readonly estimator: CVM
 }
 
 /**
- * Estimate the number of distinct values in a source, returning a promise.
- * Accepts a sync iterable, an async iterable, or a Node `Readable`.
+ * Create a sink that feeds `estimator`. The estimator holds the count and the
+ * parameters; the options cover only how values reach it.
  */
-export function estimateDistinct(
-  source: Iterable<any> | AsyncIterable<any> | Readable,
-  options?: EstimateOptions
+export function createEstimatorSink<T = any>(
+  estimator: CVM,
+  options?: EstimatorSinkOptions<T>
+): EstimatorSink
+
+/**
+ * Count the distinct values of an async source into `estimator`, returning a
+ * promise for its {@link CVM.result}. Takes an async iterable or a Node
+ * `Readable`; for values already in memory use {@link estimateDistinctSync}.
+ * The estimator keeps whatever it counted, so the same one can be handed to
+ * further calls to carry a count across sources.
+ */
+export function estimateDistinct<T = any>(
+  estimator: CVM,
+  source: AsyncIterable<T> | Readable,
+  options?: EstimateOptions<T>
 ): Promise<CVMResult>
 
 /**
+ * Count the distinct values of an iterable into `estimator` and return its
+ * {@link CVM.result}. Runs to the end in one synchronous pass, so it takes no
+ * `signal`; for a source that arrives over time use {@link estimateDistinct}.
+ */
+export function estimateDistinctSync<T = any>(
+  estimator: CVM,
+  source: Iterable<T>,
+  options?: EstimateSyncOptions<T>
+): CVMResult
+
+/**
  * The maximum number of values that can be held: `⌈(12/ε²)·ln(3m/δ)⌉`, rounded
- * up to an even number. Throws `RangeError` on a parameter that is out of range
- * or not a number.
+ * up to an even number. `expectedSize` must be at least 1. Throws `RangeError`
+ * on a parameter that is out of range or not a number.
  */
 export function computeThreshold(epsilon: number, delta: number, expectedSize: number): number
 
