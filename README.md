@@ -27,8 +27,9 @@ of a million items it lands at 93 694 distinct values.
 This library is a faithful implementation of the CVM algorithm (Chakraborty,
 Vinodchandran & Meel, [2022](https://arxiv.org/abs/2301.10191)), specifically the
 total, unbiased variant by Karayel et al.
-([ITP 2025](https://doi.org/10.4230/LIPIcs.ITP.2025.34)): it never fails, and the
-estimate's expected value is exactly the true count.
+([ITP 2025](https://doi.org/10.4230/LIPIcs.ITP.2025.34)), whose guarantees are
+machine-checked proofs in Isabelle/HOL: it never fails, and the estimate's
+expected value is exactly the true count.
 
 ## Contents
 
@@ -246,9 +247,10 @@ computeThreshold(0.025, 0.01, 1_000_000) // 374772, about 4x: the threshold scal
 
 This is the same number you'd see as `threshold` in the `result()` of a `CVM`
 constructed with the same parameters. What those entries weigh in bytes depends
-on the values themselves (a number, a short string, a long composite key…), so
-it can't be derived from the parameters alone: for end-to-end measurements, see
-the [Benchmarks](#benchmarks).
+on the values themselves, so it can't be derived from the parameters alone: a
+held value costs around 60 bytes as a short id and around 190 as a long
+composite key, so those 93 694 entries take about 5 MB in one case and about 17
+in the other. For end-to-end measurements, see the [Benchmarks](#benchmarks).
 
 ## Counting by a key (`keyFn`)
 
@@ -377,10 +379,12 @@ Two things to know:
 
 ## Errors
 
-The algorithm never fails (it is total), so counting itself never throws.
-Invalid options throw a `RangeError` or a `TypeError` when the estimator is
-created (`estimateDistinct` rejects instead, being async), and so do `toJSON` on
-a value JSON would alter and `fromJSON` on a snapshot whose parts don't agree.
+The algorithm never fails, so counting itself never throws. What throws is a bad
+argument: a parameter out of range in `new CVM()` or `computeThreshold`, a value
+`toJSON` could not save unchanged, a snapshot whose parts don't agree, a source
+handed to the wrong counting function. `estimateDistinct` rejects rather than
+throws, being async.
+
 Each of those carries a `code`, so you can branch on it rather than on the
 message:
 
