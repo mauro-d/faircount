@@ -56,8 +56,9 @@ expected value is exactly the true count.
 npm install faircount
 ```
 
-Requires Node 20 or newer. The package is ESM-only, has no runtime dependencies,
-and includes TypeScript types.
+Requires Node 20.19+ or 22.12+. The package is ESM-only, has no runtime
+dependencies, and includes TypeScript types. On those versions a CommonJS
+project can `require()` it as well.
 
 ## The estimator — `CVM`
 
