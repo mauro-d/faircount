@@ -22,7 +22,7 @@ nothing to save: a `Set` does the same job more simply. Above it the sample stop
 growing while a `Set` keeps going.
 `computeThreshold(epsilon, delta, expectedSize)` gives you that crossover for
 your own parameters, before counting anything: with the defaults over a stream
-of a million items it lands at 93 694 distinct values.
+of a million items it lands at 93 694 distinct values.
 
 This library is a faithful implementation of the CVM algorithm (Chakraborty,
 Vinodchandran & Meel, [2022](https://arxiv.org/abs/2301.10191)), specifically the
@@ -243,15 +243,15 @@ capacity, a **count of values held**, so you can size a run before starting it:
 ```js
 import { computeThreshold } from 'faircount'
 
-computeThreshold(0.05, 0.01, 1_000_000)  // 93694 values held at most
-computeThreshold(0.025, 0.01, 1_000_000) // 374772, about 4x: the threshold scales as 1/epsilon²
+computeThreshold(0.05, 0.01, 1_000_000)  // 93 694 values held at most
+computeThreshold(0.025, 0.01, 1_000_000) // 374 772, about 4x: the threshold scales as 1/epsilon²
 ```
 
 This is the same number you'd see as `threshold` in the `result()` of a `CVM`
 constructed with the same parameters. What those entries weigh in bytes depends
 on the values themselves, so it can't be derived from the parameters alone: a
 held value costs around 60 bytes as a short id and around 190 as a long
-composite key, so those 93 694 entries take about 5 MB in one case and about 17
+composite key, so those 93 694 entries take about 5 MB in one case and about 17
 in the other. For end-to-end measurements, see the [Benchmarks](#benchmarks).
 
 ## faircount and HyperLogLog
