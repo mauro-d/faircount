@@ -25,8 +25,8 @@
   "scripts": {
     "test": "node --test",
     "test:watch": "node --test --watch",
-    "lint": "standard",
-    "lint:fix": "standard --fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "bench": "node bench/index.mjs",
     "prepublishOnly": "npm run lint && npm run typecheck && npm test",
     "typecheck": "tsc -p typecheck"
@@ -58,12 +58,8 @@
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^26.1.2",
-    "standard": "^17.1.2",
+    "eslint": "^9.39.5",
+    "neostandard": "^0.13.0",
     "typescript": "^5.9.3"
-  },
-  "standard": {
-    "ignore": [
-      "types/"
-    ]
   }
 }
