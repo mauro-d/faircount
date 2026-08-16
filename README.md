@@ -244,8 +244,8 @@ capacity, a **count of values held**, so you can size a run before starting it:
 ```js
 import { computeThreshold } from 'faircount'
 
-computeThreshold(0.05, 0.01, 1_000_000)  // 93 694 values held at most
-computeThreshold(0.025, 0.01, 1_000_000) // 374 772, about 4x: the threshold scales as 1/epsilon²
+computeThreshold(0.05, 0.01, 1_000_000)  // 93694 values held at most
+computeThreshold(0.025, 0.01, 1_000_000) // 374772, about 4x: the threshold scales as 1/epsilon²
 ```
 
 This is the same number you'd see as `threshold` in the `result()` of a `CVM`
