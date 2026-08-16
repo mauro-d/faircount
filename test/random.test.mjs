@@ -46,3 +46,12 @@ test('rejects a non-finite seed', () => {
   assert.throws(() => createRandom(NaN), TypeError)
   assert.throws(() => createRandom(Infinity), TypeError)
 })
+
+test('rejects a fractional seed, which would silently seed the same run as its floor', () => {
+  assert.throws(() => createRandom(1.5), { name: 'TypeError', code: 'CVM_INVALID_OPTION' })
+  assert.deepEqual(
+    Array.from({ length: 3 }, createRandom(1)),
+    Array.from({ length: 3 }, createRandom(1)),
+    'the floor still seeds what it always did'
+  )
+})
