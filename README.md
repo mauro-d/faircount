@@ -40,6 +40,7 @@ expected value is exactly the true count.
 - [Stream API — `createEstimatorSink`](#stream-api--createestimatorsink)
 - [Cancelling](#cancelling)
 - [Key concepts](#key-concepts)
+- [faircount and HyperLogLog](#faircount-and-hyperloglog)
 - [Counting by a key (`keyFn`)](#counting-by-a-key-keyfn)
 - [Result](#result)
 - [Reproducible randomness](#reproducible-randomness)
@@ -98,7 +99,9 @@ result object; `result()` bundles both (as `estimate` and `samples`) with
 
 The estimator is yours to keep: it can be saved and resumed, carried across
 several sources, and read at any moment. Every count you read covers everything
-it has seen, not just the last source you handed it.
+it has seen, not just the last source you handed it. What it can't do is pair up
+with a second one: two estimators, or two snapshots, never combine into a single
+count.
 
 The three functions below don't replace the estimator, they feed it.
 
@@ -251,6 +254,26 @@ on the values themselves, so it can't be derived from the parameters alone: a
 held value costs around 60 bytes as a short id and around 190 as a long
 composite key, so those 93 694 entries take about 5 MB in one case and about 17
 in the other. For end-to-end measurements, see the [Benchmarks](#benchmarks).
+
+## faircount and HyperLogLog
+
+Both count distinct values in memory that doesn't grow with the count, and they
+give up different things to do it.
+
+- **What is kept.** faircount keeps a sample of the values themselves, so its
+  memory is a number of values, and what that weighs depends on what you count.
+  HyperLogLog keeps registers of hashed values: the same bytes whether the values
+  are short ids or long composite keys.
+- **Combining counts.** Two HyperLogLog sketches merge into a sketch of their
+  union, so machines that counted separately can have their results put together
+  afterwards. Two faircount estimators cannot.
+- **The estimate.** faircount's is unbiased: its expected value is exactly `F0`.
+  HyperLogLog's is biased, and implementations correct for it.
+- **Hashing.** faircount compares values with `Set` equality, so there is no hash
+  function to choose and no collisions to account for. HyperLogLog's accuracy
+  rests on its hash.
+- **Reading the state.** faircount's sample holds real values, which you can read
+  and save. A HyperLogLog sketch holds none.
 
 ## Counting by a key (`keyFn`)
 
