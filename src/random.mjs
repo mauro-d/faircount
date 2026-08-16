@@ -6,8 +6,10 @@ import { fail } from './fail.mjs'
 export function createRandom (seed) {
   if (seed === undefined || seed === null) return Math.random
 
-  if (typeof seed !== 'number' || !Number.isFinite(seed)) {
-    throw fail(TypeError, 'CVM_INVALID_OPTION', `seed must be a finite number, got ${seed}`)
+  // Integers only: the state is 32 bits, so 1.5 and 1 would seed the same run
+  // while looking like two different ones.
+  if (!Number.isInteger(seed)) {
+    throw fail(TypeError, 'CVM_INVALID_OPTION', `seed must be an integer, got ${typeof seed === 'string' ? JSON.stringify(seed) : seed}`)
   }
 
   let a = seed >>> 0

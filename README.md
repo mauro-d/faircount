@@ -22,13 +22,14 @@ nothing to save: a `Set` does the same job more simply. Above it the sample stop
 growing while a `Set` keeps going.
 `computeThreshold(epsilon, delta, expectedSize)` gives you that crossover for
 your own parameters, before counting anything: with the defaults over a stream
-of a million items it lands at 93 694 distinct values.
+of a million items it lands at 93 694 distinct values.
 
 This library is a faithful implementation of the CVM algorithm (Chakraborty,
 Vinodchandran & Meel, [2022](https://arxiv.org/abs/2301.10191)), specifically the
 total, unbiased variant by Karayel et al.
-([ITP 2025](https://doi.org/10.4230/LIPIcs.ITP.2025.34)): it never fails, and the
-estimate's expected value is exactly the true count.
+([ITP 2025](https://doi.org/10.4230/LIPIcs.ITP.2025.34)), whose guarantees are
+machine-checked proofs in Isabelle/HOL: it never fails, and the estimate's
+expected value is exactly the true count.
 
 ## Contents
 
@@ -39,6 +40,7 @@ estimate's expected value is exactly the true count.
 - [Stream API — `createEstimatorSink`](#stream-api--createestimatorsink)
 - [Cancelling](#cancelling)
 - [Key concepts](#key-concepts)
+- [faircount and HyperLogLog](#faircount-and-hyperloglog)
 - [Counting by a key (`keyFn`)](#counting-by-a-key-keyfn)
 - [Result](#result)
 - [Reproducible randomness](#reproducible-randomness)
@@ -54,8 +56,9 @@ estimate's expected value is exactly the true count.
 npm install faircount
 ```
 
-Requires Node 20 or newer. The package is ESM-only, has no runtime dependencies,
-and includes TypeScript types.
+Requires Node 20.19+ or 22.12+. The package is ESM-only, has no runtime
+dependencies, and includes TypeScript types. On those versions a CommonJS
+project can `require()` it as well.
 
 ## The estimator — `CVM`
 
@@ -97,7 +100,9 @@ result object; `result()` bundles both (as `estimate` and `samples`) with
 
 The estimator is yours to keep: it can be saved and resumed, carried across
 several sources, and read at any moment. Every count you read covers everything
-it has seen, not just the last source you handed it.
+it has seen, not just the last source you handed it. What it can't do is pair up
+with a second one: two estimators, or two snapshots, never combine into a single
+count.
 
 The three functions below don't replace the estimator, they feed it.
 
@@ -152,8 +157,7 @@ const { estimate } = await estimateDistinct(estimator, rows(), { keyFn: (r) => r
 | `keyFn` | identity | Maps each item to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
 | `signal` | — | An `AbortSignal` that stops the count. See [Cancelling](#cancelling). |
 
-Hand the same estimator to a second call and the count carries on: the result
-always covers everything that estimator has seen.
+Hand the same estimator to a second call and the count carries on.
 
 ## Stream API — `createEstimatorSink`
 
@@ -246,9 +250,30 @@ computeThreshold(0.025, 0.01, 1_000_000) // 374772, about 4x: the threshold scal
 
 This is the same number you'd see as `threshold` in the `result()` of a `CVM`
 constructed with the same parameters. What those entries weigh in bytes depends
-on the values themselves (a number, a short string, a long composite key…), so
-it can't be derived from the parameters alone: for end-to-end measurements, see
-the [Benchmarks](#benchmarks).
+on the values themselves, so it can't be derived from the parameters alone: a
+held value costs around 60 bytes as a short id and around 190 as a long
+composite key, so those 93 694 entries take about 5 MB in one case and about 17
+in the other. For end-to-end measurements, see the [Benchmarks](#benchmarks).
+
+## faircount and HyperLogLog
+
+Both count distinct values in memory that doesn't grow with the count, and they
+give up different things to do it.
+
+- **What is kept.** faircount keeps a sample of the values themselves, so its
+  memory is a number of values, and what that weighs depends on what you count.
+  HyperLogLog keeps registers of hashed values: the same bytes whether the values
+  are short ids or long composite keys.
+- **Combining counts.** Two HyperLogLog sketches merge into a sketch of their
+  union, so machines that counted separately can have their results put together
+  afterwards. Two faircount estimators cannot.
+- **The estimate.** faircount's is unbiased: its expected value is exactly `F0`.
+  HyperLogLog's is biased, and implementations correct for it.
+- **Hashing.** faircount compares values with `Set` equality, so there is no hash
+  function to choose and no collisions to account for. HyperLogLog's accuracy
+  rests on its hash.
+- **Reading the state.** faircount's sample holds real values, which you can read
+  and save. A HyperLogLog sketch holds none.
 
 ## Counting by a key (`keyFn`)
 
@@ -306,10 +331,7 @@ same estimate. The trade-off is that the `(ε, δ)` guarantee describes the odds
 of a fresh draw, while a seeded run repeats one fixed draw. Repeating it returns
 the same error instead of averaging it out.
 
-That determinism ends at a snapshot. An estimator rebuilt with `fromJSON`
-resumes with fresh randomness whether or not the original was seeded, so a
-resumed count is not a replay of the one you saved (see
-[Saving and resuming](#saving-and-resuming)).
+That determinism ends at a snapshot: see [Saving and resuming](#saving-and-resuming).
 
 `createRandom` is the generator factory behind `seed`, exported separately so
 you can use the same kind of generator yourself: pass a seed for a deterministic
@@ -377,10 +399,12 @@ Two things to know:
 
 ## Errors
 
-The algorithm never fails (it is total), so counting itself never throws.
-Invalid options throw a `RangeError` or a `TypeError` when the estimator is
-created (`estimateDistinct` rejects instead, being async), and so do `toJSON` on
-a value JSON would alter and `fromJSON` on a snapshot whose parts don't agree.
+The algorithm never fails, so counting itself never throws. What throws is a bad
+argument: a parameter out of range in `new CVM()` or `computeThreshold`, a value
+`toJSON` could not save unchanged, a snapshot whose parts don't agree, a source
+handed to the wrong counting function. `estimateDistinct` rejects rather than
+throws, being async.
+
 Each of those carries a `code`, so you can branch on it rather than on the
 message:
 
@@ -430,11 +454,8 @@ Same scale (10M items, epsilon=0.05), three shapes:
 | zipf-like (skewed) | ~1.1M | ~105 MB | ~6.6 MB | ~3 s | ~6.5 s | 0.2% |
 | uniform, below threshold | ~50K | ~4 MB | ~4 MB | ~1.7 s | ~1.8 s | 0% (exact) |
 
-On skewed streams the exact `Set` is faster (it only ever inserts, while the
-estimator also deletes), but uses 16x the memory. Below the threshold nothing
-is ever sampled away: the result is exact, the sample holds every distinct
-value, and memory sits at parity with a plain `Set`. The estimator pays off
-above the threshold.
+On the skewed row the exact `Set` is the faster of the two: it only ever
+inserts, while the estimator also deletes the hot keys as they come back.
 
 Each observed error is the median of five runs. Single runs vary a lot: at
 epsilon 0.20 the five ranged from 0.4% to 3.0%, enough for one draw to put a
