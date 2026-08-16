@@ -156,8 +156,7 @@ const { estimate } = await estimateDistinct(estimator, rows(), { keyFn: (r) => r
 | `keyFn` | identity | Maps each item to the value to count. See [Counting by a key](#counting-by-a-key-keyfn). |
 | `signal` | — | An `AbortSignal` that stops the count. See [Cancelling](#cancelling). |
 
-Hand the same estimator to a second call and the count carries on: the result
-always covers everything that estimator has seen.
+Hand the same estimator to a second call and the count carries on.
 
 ## Stream API — `createEstimatorSink`
 
@@ -331,10 +330,7 @@ same estimate. The trade-off is that the `(ε, δ)` guarantee describes the odds
 of a fresh draw, while a seeded run repeats one fixed draw. Repeating it returns
 the same error instead of averaging it out.
 
-That determinism ends at a snapshot. An estimator rebuilt with `fromJSON`
-resumes with fresh randomness whether or not the original was seeded, so a
-resumed count is not a replay of the one you saved (see
-[Saving and resuming](#saving-and-resuming)).
+That determinism ends at a snapshot: see [Saving and resuming](#saving-and-resuming).
 
 `createRandom` is the generator factory behind `seed`, exported separately so
 you can use the same kind of generator yourself: pass a seed for a deterministic
@@ -457,11 +453,8 @@ Same scale (10M items, epsilon=0.05), three shapes:
 | zipf-like (skewed) | ~1.1M | ~105 MB | ~6.6 MB | ~3 s | ~6.5 s | 0.2% |
 | uniform, below threshold | ~50K | ~4 MB | ~4 MB | ~1.7 s | ~1.8 s | 0% (exact) |
 
-On skewed streams the exact `Set` is faster (it only ever inserts, while the
-estimator also deletes), but uses 16x the memory. Below the threshold nothing
-is ever sampled away: the result is exact, the sample holds every distinct
-value, and memory sits at parity with a plain `Set`. The estimator pays off
-above the threshold.
+On the skewed row the exact `Set` is the faster of the two: it only ever
+inserts, while the estimator also deletes the hot keys as they come back.
 
 Each observed error is the median of five runs. Single runs vary a lot: at
 epsilon 0.20 the five ranged from 0.4% to 3.0%, enough for one draw to put a
