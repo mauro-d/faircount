@@ -48,6 +48,7 @@ expected value is exactly the true count.
 - [Errors](#errors)
 - [Benchmarks](#benchmarks)
 - [References](#references)
+- [How it was built](#how-it-was-built)
 - [License](#license)
 
 ## Install
@@ -469,6 +470,10 @@ prints the median and the range; scenarios are defined in `bench/scenarios.mjs`.
   An Algorithm for the (Text) Book.* ESA 2022. [arXiv:2301.10191](https://arxiv.org/abs/2301.10191)
 - E. Karayel, S. J. Watt, D. Khu, K. S. Meel, Y. K. Tan. *Verification of the CVM
   Algorithm with a Functional Probabilistic Invariant.* ITP 2025. [doi:10.4230/LIPIcs.ITP.2025.34](https://doi.org/10.4230/LIPIcs.ITP.2025.34). Its Algorithm 3 is the total, unbiased variant implemented here.
+
+## How it was built
+
+Designed, written, and reviewed by me and Claude Code.
 
 ## License
 
