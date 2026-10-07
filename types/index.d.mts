@@ -15,7 +15,7 @@ type CountableValue = string | number | boolean | null
  * pass through untouched and keep their own.
  */
 export type CVMErrorCode =
-  /** An option is out of range or of the wrong type. */
+  /** An option is out of range or of the wrong type, or the estimator is not a `CVM`. */
   | 'CVM_INVALID_OPTION'
   /** A source went to the wrong counting function, or is not iterable at all. */
   | 'CVM_INVALID_SOURCE'
@@ -27,9 +27,10 @@ export type CVMErrorCode =
 /** The estimator's own parameters. Only `new CVM()` takes them. */
 export interface CVMOptions {
   /**
-   * How many items the stream is expected to hold, at least 1. Required: it is
-   * what makes the `(ε, δ)` bound true, and it enters only through a logarithm,
-   * so an upper bound is fine and over-estimating is cheap.
+   * How many items the estimator will see in total, duplicates included, at
+   * least 1. Required: it is what makes the `(ε, δ)` bound true, and it enters
+   * only through a logarithm, so an upper bound is fine and over-estimating is
+   * cheap.
    */
   expectedSize: number
   /** How close the estimate should be, as a fraction (`0.05` = ±5%). Default `0.05`. */
@@ -79,10 +80,9 @@ export interface CVMSnapshot {
 export interface EstimateSyncOptions<T = any> {
   /**
    * Maps each item to the value to count: a string, number, boolean or `null`.
-   * The estimator dedups with a `Set`, so an object or array would be compared
-   * by reference and never dedup. A field that may be missing has to be given a
-   * value of your choosing first, since `undefined` would count every item
-   * lacking it as one and the same. Default: identity.
+   * A field that may be missing has to be given a value of your choosing first,
+   * since `undefined` would count every item lacking it as one and the same.
+   * Default: identity.
    */
   keyFn?: (item: T) => CountableValue
 }
@@ -99,18 +99,17 @@ export interface EstimateOptions<T = any> extends EstimateSyncOptions<T> {
 export interface EstimatorSinkOptions<T = any> {
   /**
    * Maps each chunk to the value to count: a string, number, boolean or `null`.
-   * The estimator dedups with a `Set`, so an object or array would be compared
-   * by reference and never dedup. A field that may be missing has to be given a
-   * value of your choosing first, since `undefined` would count every chunk
-   * lacking it as one and the same. Default: identity.
+   * A field that may be missing has to be given a value of your choosing first,
+   * since `undefined` would count every chunk lacking it as one and the same.
+   * Default: identity.
    */
   keyFn?: (chunk: T) => CountableValue
   /**
    * Treats each write as one opaque value when `true` (the default, accepts any
    * type), or as bytes when `false`: a string, `Buffer`, `TypedArray` or
    * `DataView`, anything else throws. In `false` mode every chunk arrives as a
-   * `Buffer`, which the default `keyFn` cannot dedup, so pass one that calls
-   * `.toString()` on it.
+   * `Buffer`, so without a `keyFn` that decodes it every chunk counts as a new
+   * value.
    */
   objectMode?: boolean
   /**
@@ -215,5 +214,5 @@ export function estimateDistinctSync<T = any>(
  */
 export function computeThreshold(epsilon: number, delta: number, expectedSize: number): number
 
-/** Create a uniform `[0, 1)` generator; with a `seed` it is deterministic. */
+/** Create a uniform `[0, 1)` generator; with an integer `seed` it is deterministic. */
 export function createRandom(seed?: number): () => number
