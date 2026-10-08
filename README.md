@@ -176,8 +176,7 @@ await pipeline(values, createEstimatorSink(estimator)) // values: your source st
 console.log(estimator.result()) // { estimate, samples, threshold, p }
 ```
 
-The sink carries it as `sink.estimator`, for code that receives the sink without
-having built it.
+The sink exposes the estimator as `sink.estimator`.
 
 The sink counts one value per write, so whatever decides where one value ends and
 the next begins belongs upstream of it:
@@ -235,9 +234,10 @@ That is why over-estimating is the safe direction, and why `expectedSize` counts
 the whole life of an estimator, across every source and every resumed session,
 not one run.
 
-**How much memory will this cost?** `computeThreshold(epsilon, delta, expectedSize)`
-takes the same three parameters as [the estimator](#the-estimator--cvm) and returns that
-capacity, a **count of values held**, so you can size a run before starting it:
+**How much memory will this cost?** `computeThreshold(epsilon, delta,
+expectedSize)` takes the same three parameters as [the
+estimator](#the-estimator--cvm) and returns that capacity, a **count of values
+held**, so you can size a run before starting it:
 
 ```js
 import { computeThreshold } from 'faircount'
@@ -297,26 +297,17 @@ estimateDistinctSync(estimator, orders, { keyFn: (o) => makeYourKey(o.user, o.pr
 
 You write `makeYourKey` yourself: combine whatever fields define distinctness
 for your data into one value that never collides for two genuinely different
-inputs. Naive concatenation and `JSON.stringify` both have sharp edges (e.g. in
-a JSON array `null`, `undefined`, and `NaN` all serialize to `null`), so test
-your encoding against your actual data.
+inputs. Naive concatenation and `JSON.stringify` can both map different inputs
+to the same value: in a JSON array, `null`, `undefined`, and `NaN` all serialize
+to `null`.
 
 ## Result
 
-```ts
-{
-  estimate: number,  // the estimated number of distinct values
-  samples: number,   // how many values are held
-  threshold: number, // the cap on samples
-  p: number          // current sampling rate: estimate = samples / p
-}
-```
-
-`estimate` is the answer; the other three say how it was reached, and you can
-ignore them until you need to know. If the stream has fewer distinct values than
-`threshold`, nothing is ever dropped, `p` stays at 1 and the count is exact.
-Otherwise it's an estimate, and it changes from run to run unless you set a
-`seed`.
+- `estimate`: the estimated number of distinct values the estimator has seen.
+- `samples`: how many values the sample holds right now.
+- `threshold`: the most values the sample can hold, fixed by the parameters.
+- `p`: the sampling rate, with `estimate = samples / p`. While it is 1 nothing
+  has been sampled away, and the estimate is the exact count.
 
 ## Reproducible randomness
 
@@ -367,21 +358,15 @@ The snapshot carries the parameters along with the sampled values, so `fromJSON`
 takes nothing else. Its size is bounded by `threshold`, the same bound that keeps
 the sample from growing, and `fromJSON` rejects a snapshot whose parts don't agree.
 
-The other three count into that same estimator, so they save the same way:
-
-```js
-estimateDistinctSync(estimator, firstBatch)
-await estimateDistinct(estimator, rows(), { keyFn: (r) => r.userId })
-await pipeline(nextBatch, createEstimatorSink(estimator))
-await writeFile('checkpoint.json', JSON.stringify(estimator))
-```
+It makes no difference which function fed the estimator: `estimateDistinctSync`,
+`estimateDistinct` and `createEstimatorSink` all count into it, so
+`JSON.stringify(estimator)` saves what they counted.
 
 Replaying values the estimator has already counted doesn't bias the result: the
 estimate is unbiased for any stream, and repeats don't change how many distinct
 values a stream holds. You won't get the same number as before, but it is drawn
 around the same count. Values it never sees are a real loss, because the estimate
-is then unbiased for the part it saw rather than for the whole. So after a
-restart, overlapping is safer than leaving a gap.
+is then unbiased for the part it saw rather than for the whole.
 
 Two things to know:
 
@@ -397,8 +382,7 @@ Two things to know:
 ## Errors
 
 Counting itself never fails: the algorithm has no failure path. The errors the
-library raises all carry a `code`, so you can branch on it rather than on the
-message:
+library raises all carry a `code`:
 
 | `code` | Raised when |
 | --- | --- |
@@ -419,9 +403,9 @@ Memory and time as scale grows, with epsilon=0.05 and delta=0.01 fixed:
 
 | Items processed | Distinct values | `Set` memory | faircount memory | `Set` time | faircount time | Observed error |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2M  | ~400K | ~30 MB  | ~5 MB  | <1 s | <1 s | 0.4% |
-| 10M | ~2M   | ~160 MB | ~6 MB  | ~5 s | ~1.5 s | 0.2% |
-| 50M | ~10M  | ~900 MB | ~7 MB  | ~30 s | ~7 s | 0.2% |
+| 2M | ~400K | ~30 MB | ~5 MB | <1 s | <1 s | 0.4% |
+| 10M | ~2M | ~160 MB | ~6 MB | ~5 s | ~1.5 s | 0.2% |
+| 50M | ~10M | ~900 MB | ~7 MB | ~30 s | ~7 s | 0.2% |
 
 Memory stays nearly flat as distinct values grow; an exact `Set` grows with
 them.
@@ -431,7 +415,7 @@ row above (~2 million distinct, delta=0.01):
 
 | epsilon | faircount memory | Observed error |
 | --- | --- | --- |
-| 0.05 | ~6 MB   | 0.2% |
+| 0.05 | ~6 MB | 0.2% |
 | 0.10 | ~1.7 MB | 0.7% |
 | 0.20 | ~0.6 MB | 1.1% |
 
@@ -444,12 +428,8 @@ Same scale (10M items, epsilon=0.05), three shapes:
 | zipf-like (skewed) | ~1.1M | ~105 MB | ~6.6 MB | ~3 s | ~6.5 s | 0.2% |
 | uniform, below threshold | ~50K | ~4 MB | ~4 MB | ~1.7 s | ~1.8 s | 0% (exact) |
 
-On the skewed row the exact `Set` is the faster of the two: it only ever
-inserts, while the estimator also deletes the hot keys as they come back.
-
-Each observed error is the median of five runs. Single runs vary a lot: at
-epsilon 0.20 the five ranged from 0.4% to 3.0%, enough for one draw to put a
-larger epsilon ahead of a smaller one. Memory and time vary by machine, Node
+Each observed error is the median of five runs; at epsilon 0.20 the five ranged
+from 0.4% to 3.0%. Memory and time vary by machine, Node
 version, and data shape. From a clone of the repository, `npm run bench`
 measures your own setup and prints the median and the range; the scenarios are
 in `bench/scenarios.mjs`.
@@ -459,7 +439,9 @@ in `bench/scenarios.mjs`.
 - S. Chakraborty, N. V. Vinodchandran, K. S. Meel. *Distinct Elements in Streams:
   An Algorithm for the (Text) Book.* ESA 2022. [arXiv:2301.10191](https://arxiv.org/abs/2301.10191)
 - E. Karayel, S. J. Watt, D. Khu, K. S. Meel, Y. K. Tan. *Verification of the CVM
-  Algorithm with a Functional Probabilistic Invariant.* ITP 2025. [doi:10.4230/LIPIcs.ITP.2025.34](https://doi.org/10.4230/LIPIcs.ITP.2025.34). Its Algorithm 3 is the total, unbiased variant implemented here.
+  Algorithm with a Functional Probabilistic Invariant.* ITP 2025.
+  [doi:10.4230/LIPIcs.ITP.2025.34](https://doi.org/10.4230/LIPIcs.ITP.2025.34).
+  Its Algorithm 3 is the total, unbiased variant implemented here.
 
 ## How it was built
 
